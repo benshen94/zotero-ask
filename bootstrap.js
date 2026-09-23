@@ -1,5 +1,5 @@
 const ZOTERO_ASK_ID = 'zotero-ask@benshenhar.com';
-const ZOTERO_ASK_VERSION = '0.1.8';
+const ZOTERO_ASK_VERSION = '0.1.9';
 const ZOTERO_ASK_PREF = 'extensions.zoteroAsk.';
 const ZOTERO_ASK_DEFAULT_WIDTH = 390;
 let ZOTERO_ASK_ROOT = '';
@@ -8,6 +8,8 @@ let ZOTERO_ASK_SERVER = null;
 let ZOTERO_ASK_DOCS = new WeakMap();
 let ZOTERO_ASK_RENDERED_DOCS = new Set();
 let ZOTERO_ASK_SHUTTING_DOWN = false;
+let ZOTERO_ASK_RENDER_MATH;
+let ZOTERO_ASK_KATEX_CSS;
 
 function install() {}
 
@@ -37,6 +39,8 @@ function shutdown() {
   if (ZOTERO_ASK_SERVER) ZOTERO_ASK_SERVER.close();
   ZOTERO_ASK_SERVER = null;
   ZOTERO_ASK_DOCS = new WeakMap();
+  ZOTERO_ASK_RENDER_MATH = undefined;
+  ZOTERO_ASK_KATEX_CSS = undefined;
 }
 
 function ZoteroAsk_pref(name, fallback) {
@@ -64,8 +68,30 @@ function ZoteroAsk_pdfOptions(pdfWindow, values) {
   return options;
 }
 
-function ZoteroAsk_escape(value) {
-  return String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+// KaTeX and its stylesheet (fonts inlined by build.sh) are bundled in the XPI and loaded on first use.
+function ZoteroAsk_renderMath(tex, displayMode) {
+  if (ZOTERO_ASK_RENDER_MATH === undefined) {
+    ZOTERO_ASK_RENDER_MATH = null;
+    try {
+      const scope = { module: { exports: {} } };
+      scope.exports = scope.module.exports;
+      Services.scriptloader.loadSubScript(`${ZOTERO_ASK_ROOT}vendor/katex/katex.min.js`, scope);
+      ZOTERO_ASK_RENDER_MATH = ZOTERO_ASK_CORE.createMathRenderer(scope.module.exports);
+    } catch (error) { Zotero.debug(`Zotero Ask could not load KaTeX: ${error}`); }
+  }
+  return ZOTERO_ASK_RENDER_MATH ? ZOTERO_ASK_RENDER_MATH(tex, displayMode) : null;
+}
+
+function ZoteroAsk_katexCSS() {
+  if (ZOTERO_ASK_KATEX_CSS === undefined) {
+    ZOTERO_ASK_KATEX_CSS = '';
+    try {
+      const scope = {};
+      Services.scriptloader.loadSubScript(`${ZOTERO_ASK_ROOT}vendor/katex/katex-style.js`, scope);
+      ZOTERO_ASK_KATEX_CSS = String(scope.ZoteroAskKatexCSS || '');
+    } catch (error) { Zotero.debug(`Zotero Ask could not load KaTeX styles: ${error}`); }
+  }
+  return ZOTERO_ASK_KATEX_CSS;
 }
 
 function ZoteroAsk_trackDocument(doc) {
@@ -136,7 +162,7 @@ function ZoteroAsk_ensureStyle(doc) {
   if (doc.getElementById('zotero-ask-style')) return;
   const style = doc.createElement('style');
   style.id = 'zotero-ask-style';
-  style.textContent = `
+  style.textContent = ZoteroAsk_katexCSS() + `
     #zotero-ask-toolbar-button { min-width:42px; font-weight:600; }
     #zotero-ask-toolbar-button[aria-pressed="true"] { color:light-dark(#2563c9,#8ab4ff); }
     .zotero-ask-selection-action { font:inherit; }
@@ -189,15 +215,21 @@ function ZoteroAsk_ensureStyle(doc) {
     #zotero-ask-panel .za-message-content code { font-family:var(--za-mono); font-size:.92em; }
     #zotero-ask-panel .za-message-content :not(pre) > code { padding:0 3px; border-radius:3px; background:var(--za-hover); }
     #zotero-ask-panel .za-message-content a { color:var(--za-accent); text-underline-offset:2px; }
+    #zotero-ask-panel .za-message-content .katex { font-size:1.08em; line-height:1.2; text-indent:0; }
+    #zotero-ask-panel .za-message-content .katex-display { margin:6px 0; padding:2px 1px 4px; max-width:100%; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; }
+    #zotero-ask-panel .za-message-content .katex-display + br { display:none; }
+    #zotero-ask-panel .za-message-content .za-math-source { font-family:var(--za-mono); font-size:.92em; color:var(--za-text-2); }
 
     #zotero-ask-panel .za-save-note { padding:5px 12px 0; border-top:1px solid var(--za-line); color:var(--za-text-3); font-size:11px; }
     #zotero-ask-panel .za-composer { padding:6px 12px 10px; background:var(--za-bg); }
+    #zotero-ask-panel .za-composer-intro { margin:0 0 6px; color:var(--za-text-2); font-size:12px; line-height:1.4; }
     #zotero-ask-panel .za-selection { margin-bottom:6px; padding:4px 8px 4px 9px; max-height:4.6em; overflow:auto; border-left:3px solid var(--za-quote); border-radius:0 var(--za-radius) var(--za-radius) 0; background:var(--za-quote-tint); color:var(--za-text); font:italic 12px/1.4 var(--za-serif); }
     #zotero-ask-panel textarea { display:block; width:100%; min-height:60px; max-height:180px; padding:7px 9px; resize:vertical; border:1px solid var(--za-line-strong); border-radius:var(--za-radius); background:var(--za-surface); line-height:1.45; }
     #zotero-ask-panel textarea::placeholder { color:var(--za-text-3); opacity:1; }
     #zotero-ask-panel textarea:focus-visible { border-color:var(--za-accent); outline:2px solid transparent; box-shadow:0 0 0 2px color-mix(in srgb,var(--za-accent) 30%,transparent); }
     #zotero-ask-panel .za-submit-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; }
-    #zotero-ask-panel .za-hint { min-width:0; color:var(--za-text-3); font-size:11px; line-height:1.35; }
+    #zotero-ask-panel .za-key-hint { min-width:0; color:var(--za-text-3); font-size:11px; line-height:1.35; }
+    #zotero-ask-panel .za-hint { margin:6px 0 0; color:var(--za-text-3); font-size:11px; line-height:1.35; }
     #zotero-ask-panel .za-send { flex:0 0 auto; min-width:64px; height:var(--za-control-height); padding:0 14px; border:0; border-radius:var(--za-radius); background:var(--za-accent); color:var(--za-on-accent); font-weight:600; }
     #zotero-ask-panel .za-send:not(:disabled):hover { background:var(--za-accent-hover); }
     #zotero-ask-panel .za-send:focus-visible { outline-offset:2px; }
@@ -233,7 +265,7 @@ function ZoteroAsk_createPanel(reader, doc) {
     <div class="za-status" role="status" aria-live="polite"></div>
     <main class="za-messages" role="log" aria-live="polite"></main>
     <div class="za-save-note">Chats are saved locally with this PDF attachment.</div>
-    <form class="za-composer"><div class="za-selection" hidden></div><textarea aria-label="Ask a question" placeholder="Ask about this paper…  (⌘↩ to send)"></textarea><div class="za-submit-row"><span class="za-hint">Paper text and selected page images go to your Codex model.</span><button class="za-send" type="submit">Ask</button></div></form>
+    <form class="za-composer"><p class="za-composer-intro" id="za-composer-intro">Ask about this paper. Highlight a passage to focus your question.</p><div class="za-selection" hidden></div><textarea aria-label="Ask a question" aria-describedby="za-composer-intro za-key-hint" placeholder="Ask about this paper…"></textarea><div class="za-submit-row"><span class="za-key-hint" id="za-key-hint">Enter to send · Shift+Enter for a new line</span><button class="za-send" type="submit">Ask</button></div><p class="za-hint">Paper text and selected page images go to your Codex model.</p></form>
   `;
   doc.body.appendChild(panel);
 
@@ -254,7 +286,12 @@ function ZoteroAsk_createPanel(reader, doc) {
   panel.querySelector('.za-new').addEventListener('click', () => ZoteroAsk_newChat(state));
   panel.querySelector('.za-composer').addEventListener('submit', event => { event.preventDefault(); void ZoteroAsk_submit(state); });
   state.input.addEventListener('keydown', event => {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); void ZoteroAsk_submit(state); }
+    const action = ZOTERO_ASK_CORE.composerKeyAction(event, {
+      busy: state.busy, disabled: state.input.disabled || state.sendButton.disabled, text: state.input.value
+    });
+    if (action === 'default') return;
+    event.preventDefault();
+    if (action === 'submit') void ZoteroAsk_submit(state);
   });
   state.modelSelect.addEventListener('change', () => ZoteroAsk_modelChanged(state));
   state.effortSelect.addEventListener('change', () => ZoteroAsk_setPref('effort', state.effortSelect.value));
@@ -396,32 +433,11 @@ function ZoteroAsk_renderChats(state) {
     const label = state.doc.createElement('div'); label.className = 'za-message-label';
     label.textContent = message.role === 'user' ? 'You' : (message.model || 'Zotero Ask');
     const content = state.doc.createElement('div'); content.className = 'za-message-content';
-    content.innerHTML = ZoteroAsk_markdown(message.text);
+    content.innerHTML = ZOTERO_ASK_CORE.renderMarkdown(message.text, ZoteroAsk_renderMath);
     wrapper.append(label, content);
     state.log.appendChild(wrapper);
   }
   state.log.scrollTop = state.log.scrollHeight;
-}
-
-function ZoteroAsk_markdown(source) {
-  const escape = ZoteroAsk_escape;
-  let text = escape(source);
-  const blocks = [];
-  text = text.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, language, code) => {
-    const placeholder = `\u0000BLOCK${blocks.length}\u0000`;
-    blocks.push(`<pre><code>${code.replace(/\n$/, '')}</code></pre>`);
-    return placeholder;
-  });
-  text = text.replace(/^### (.+)$/gm, '<h4>$1</h4>').replace(/^## (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^# (.+)$/gm, '<h3>$1</h3>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noreferrer">$1</a>')
-    .replace(/^&gt; ?(.+)$/gm, '<blockquote>$1</blockquote>')
-    .replace(/\n/g, '<br>');
-  text = text.replace(/\u0000BLOCK(\d+)\u0000/g, (_, index) => blocks[Number(index)] || '');
-  return text;
 }
 
 async function ZoteroAsk_storagePath(key) {
@@ -771,7 +787,7 @@ async function ZoteroAsk_writeImages(images) {
 }
 
 async function ZoteroAsk_submit(state) {
-  if (state.busy) return;
+  if (state.busy || state.input.disabled || state.sendButton.disabled) return;
   const question = state.input.value.trim();
   if (!question || !state.item) return;
   state.status.classList.remove('za-error');

@@ -155,7 +155,75 @@ var ZoteroAskCore = (() => {
     return header.join('\n\n');
   }
 
-  return { tokens, isBroadQuestion, chooseVisualPages, normalizeModels, normalizeChatState, buildPrompt };
+  const KATEX_OPTIONS = Object.freeze({
+    trust: false, throwOnError: false, errorColor: '#cc0000', strict: 'ignore', output: 'htmlAndMathml', maxExpand: 1000, maxSize: 10
+  });
+  const MATH_SOURCE_LIMIT = 4000;
+  const MATH_CACHE_LIMIT = 300;
+  // $$…$$, \[…\], \(…\), then single-line $…$. Inline dollars must hug their content and the closing
+  // dollar must not precede a digit, so prices such as "$5 and $10" or "$5-$10" stay plain text.
+  const MATH_PATTERN = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<![\\$])\$([^\s$\\]|[^\s$][^$\n]*?[^\s\\$])\$(?![\d$])/g;
+
+  function escapeHTML(value) {
+    return String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  }
+
+  // Returns (tex, displayMode) => HTML, or null when KaTeX cannot typeset the source.
+  function createMathRenderer(katex) {
+    const cache = new Map();
+    return (tex, displayMode) => {
+      const key = `${displayMode ? 'D' : 'I'}${tex}`;
+      if (cache.has(key)) return cache.get(key);
+      let html = null;
+      if (tex.length <= MATH_SOURCE_LIMIT) {
+        try {
+          html = katex.renderToString(tex, { ...KATEX_OPTIONS, displayMode });
+          // Parse errors and unsupported or untrusted commands come back marked in errorColor; show source instead.
+          if (html.includes('class="katex-error"') || html.includes(`mathcolor="${KATEX_OPTIONS.errorColor}"`)) html = null;
+        } catch (_) { html = null; }
+      }
+      if (cache.size >= MATH_CACHE_LIMIT) cache.delete(cache.keys().next().value);
+      cache.set(key, html);
+      return html;
+    };
+  }
+
+  function renderMarkdown(source, renderMath = null) {
+    const slots = [];
+    const hold = html => `\u0000${slots.push(html) - 1}\u0000`;
+    let text = String(source || '').replace(/\u0000/g, '');
+    text = text.replace(/```[^\n]*\n([\s\S]*?)```/g, (_, code) => hold(`<pre><code>${escapeHTML(code.replace(/\n$/, ''))}</code></pre>`));
+    text = text.replace(/`([^`]+)`/g, (_, code) => hold(`<code>${escapeHTML(code)}</code>`));
+    text = text.replace(MATH_PATTERN, (match, display, bracket, paren, inline) => {
+      const tex = (display ?? bracket ?? paren ?? inline).trim();
+      const html = tex && renderMath ? renderMath(tex, display !== undefined || bracket !== undefined) : null;
+      return hold(html || `<span class="za-math-source">${escapeHTML(match)}</span>`);
+    });
+    text = escapeHTML(text)
+      .replace(/\\\$/g, '$')
+      .replace(/^### (.+)$/gm, '<h4>$1</h4>').replace(/^## (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^# (.+)$/gm, '<h3>$1</h3>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noreferrer">$1</a>')
+      .replace(/^&gt; ?(.+)$/gm, '<blockquote>$1</blockquote>')
+      .replace(/\n/g, '<br>');
+    return text.replace(/\u0000(\d+)\u0000/g, (_, index) => slots[Number(index)] ?? '');
+  }
+
+  // Composer Enter handling: 'submit', 'block' (swallow the key), or 'default' (let the textarea handle it).
+  function composerKeyAction(event, { busy = false, disabled = false, text = '' } = {}) {
+    if (!event || event.key !== 'Enter') return 'default';
+    if (event.isComposing || event.keyCode === 229) return 'default';
+    if (event.shiftKey || event.altKey) return 'default';
+    if (event.repeat || busy || disabled || !String(text).trim()) return 'block';
+    return 'submit';
+  }
+
+  return {
+    tokens, isBroadQuestion, chooseVisualPages, normalizeModels, normalizeChatState, buildPrompt,
+    KATEX_OPTIONS, escapeHTML, createMathRenderer, renderMarkdown, composerKeyAction
+  };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = ZoteroAskCore;

@@ -11,6 +11,8 @@ Ask questions about a paper without leaving Zotero’s PDF reader. Zotero Ask ad
 - Opens as a sidebar in the Zotero PDF reader.
 - Uses the paper text and question-relevant page images, which helps with figures and tables.
 - Keeps separate local conversations for each PDF attachment.
+- Typesets LaTeX math in questions and answers: `$…$` and `\(…\)` inline, `$$…$$` and `\[…\]` as display equations. Code is left literal, prices such as `$5` stay plain text, and math that cannot be rendered is shown as its source.
+- Press Enter to send and Shift+Enter for a new line. Highlight a passage first to focus the question on it.
 - Refreshes the model list from Codex whenever the sidebar opens, so newly available models appear automatically.
 - Offers model reasoning and Fast settings when the selected model supports them.
 - Adds no API key, secret, or separate account. It uses your signed-in Codex CLI.
@@ -25,7 +27,7 @@ Zotero Ask talks to the Codex app-server started by the CLI on your computer. It
 
 ### 2. Install the Zotero plugin
 
-1. Download `zotero-ask-0.1.8.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
+1. Download `zotero-ask-0.1.9.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
 2. In Zotero, choose **Tools → Plugins**.
 3. Open the gear menu and choose **Install Plugin From File…**.
 4. Select the downloaded XPI and restart Zotero if prompted.
@@ -59,6 +61,7 @@ The installer currently accepts Zotero 9.x. Zotero 10 has not been verified, so 
 Requires Node.js and Python 3. From the project directory:
 
 ```sh
+npm ci
 npm run check
 npm test
 ./build.sh
@@ -66,10 +69,12 @@ npm test
 
 The XPI is written to `dist/`. Install it through **Tools → Plugins → Install Plugin From File…**.
 
+`npm ci` installs the pinned KaTeX release. `build.sh` copies KaTeX into the XPI and embeds its fonts in the bundled stylesheet, so math rendering never loads anything from the network.
+
 ## Development status
 
 Zotero Ask is a small community plugin built on local Zotero extension APIs and the Codex app-server. It is tested against the versions listed above; future upstream changes can require updates. Bug reports and focused pull requests are welcome.
 
 ## License
 
-Zotero Ask is released under the [MIT License](LICENSE).
+Zotero Ask is released under the [MIT License](LICENSE). The XPI bundles [KaTeX](https://katex.org) 0.18.7 and its fonts, which are also MIT licensed; KaTeX's license ships in the XPI at `vendor/katex/LICENSE`.
