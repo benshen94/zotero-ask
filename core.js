@@ -245,6 +245,13 @@ var ZoteroAskCore = (() => {
     return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
   }
 
+  // Ask's width: at least 300 px, and never so wide that the PDF has less than 240 px.
+  function clampPanelWidth(width, viewportWidth) {
+    const max = Math.max(300, Math.min(760, (Number(viewportWidth) || 1200) - 240));
+    const value = Number(width);
+    return Math.round(Math.max(300, Math.min(max, Number.isFinite(value) ? value : 390)));
+  }
+
   // The passage from Zotero's text-selection popup, with its 1-based page when the reader reports it.
   function selectionFromPopup(params, fallbackPage = null) {
     const annotation = params?.annotation;
@@ -370,7 +377,7 @@ var ZoteroAskCore = (() => {
     tokens, isBroadQuestion, chooseVisualPages, normalizeModels, normalizeChatState, buildPrompt,
     KATEX_OPTIONS, escapeHTML, createMathRenderer, renderMarkdown, composerKeyAction,
     DEFAULT_INSTRUCTIONS, INSTRUCTIONS_LIMIT, normalizeInstructions, isAuthError, SIGN_OUT_NOTE, describeAccount, createAccountFlow,
-    redactDiagnostics, withDeadline, selectionFromPopup
+    redactDiagnostics, withDeadline, selectionFromPopup, clampPanelWidth
   };
 })();
 

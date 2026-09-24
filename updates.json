@@ -3,6 +3,16 @@
     "zotero-ask@benshenhar.com": {
       "updates": [
         {
+          "version": "0.2.3",
+          "update_link": "https://github.com/benshen94/zotero-ask/releases/download/v0.2.3/zotero-ask-0.2.3.xpi",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "9.0.0",
+              "strict_max_version": "9.0.*"
+            }
+          }
+        },
+        {
           "version": "0.2.2",
           "update_link": "https://github.com/benshen94/zotero-ask/releases/download/v0.2.2/zotero-ask-0.2.2.xpi",
           "applications": {

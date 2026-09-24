@@ -76,3 +76,13 @@ test('selection popups yield the passage and the page it came from', () => {
   assert.equal(core.selectionFromPopup({ annotation: { text: '   ' } }, 3), null);
   assert.equal(core.selectionFromPopup(undefined, 3), null);
 });
+
+test('the panel width stays usable for both Ask and the PDF', () => {
+  assert.equal(core.clampPanelWidth(390, 1440), 390);
+  assert.equal(core.clampPanelWidth(100, 1440), 300);
+  assert.equal(core.clampPanelWidth(2000, 1440), 760);
+  assert.equal(core.clampPanelWidth(900, 900), 660, 'leaves the PDF at least 240 px');
+  assert.equal(core.clampPanelWidth(500, 400), 300, 'never narrower than 300 px');
+  assert.equal(core.clampPanelWidth('not a number', 1440), 390);
+  assert.equal(core.clampPanelWidth(412.6, 1440), 413);
+});

@@ -2,18 +2,21 @@
 
 Ask questions about a paper without leaving Zotero’s PDF reader. Zotero Ask adds a compact conversation sidebar, uses the PDF’s extracted text, and selects up to eight page images that are relevant to your question.
 
-![Illustrative preview of the Zotero Ask sidebar beside a placeholder PDF: conversation tabs, a question, an answer with typeset LaTeX, and the composer. Rendered from the plugin's own code with synthetic content; not a screenshot of a running Zotero window](screenshots/zotero-ask-sidebar.png)
+![Illustrative Zotero PDF reader preview with the Ask sidebar, chat tabs, a selected-passage chip, and a typeset equation](screenshots/zotero-ask-sidebar.png)
 
-*Illustrative preview: the Ask sidebar rendered from the plugin code with a synthetic paper, conversation, and model. Not captured from Zotero.*
+*Illustrative preview recreated for 0.2.3 with synthetic paper text and model output; it is not a screenshot from a running Zotero window.*
 
 ## What it does
 
 - Opens as a sidebar in the Zotero PDF reader.
 - Uses the paper text and question-relevant page images, which helps with figures and tables.
 - Keeps separate local conversations for each PDF attachment.
+- Keeps typing, selecting, and copying in Ask from triggering Zotero reader shortcuts.
 - Typesets LaTeX math in questions and answers: `$…$` and `\(…\)` inline, `$$…$$` and `\[…\]` as display equations. Code is left literal, prices such as `$5` stay plain text, and math that cannot be rendered is shown as its source.
 - Press Enter to send and Shift+Enter for a new line.
-- Select text in the PDF and choose **Ask about selection** to attach that passage to your next question. It appears above the input with its page number; × removes it.
+- Select text in the PDF to attach that passage to your next question (with Ask closed, choose **Ask about selection** in Zotero's selection popup). It appears above the input with its page number; × removes it.
+- Chats run independently: you can ask in another chat while one is still answering. The status line shows how long the current answer has been thinking or writing.
+- Drag the panel's left edge to resize it; double-click the edge to reset.
 - Refreshes the model list from Codex whenever the sidebar opens, so newly available models appear automatically.
 - Offers model reasoning and Fast settings when the selected model supports them.
 - Adds no API key, secret, or separate account. It uses your signed-in Codex CLI.
@@ -31,7 +34,7 @@ Zotero Ask talks to the Codex app-server started by the CLI on your computer. It
 
 ### 2. Install the Zotero plugin
 
-1. Download `zotero-ask-0.2.2.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
+1. Download `zotero-ask-0.2.3.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
 2. In Zotero, choose **Tools → Plugins**.
 3. Open the gear menu and choose **Install Plugin From File…**.
 4. Select the downloaded XPI and restart Zotero if prompted.

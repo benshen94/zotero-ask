@@ -1,11 +1,14 @@
 const ZOTERO_ASK_ID = 'zotero-ask@benshenhar.com';
-const ZOTERO_ASK_VERSION = '0.2.2';
+const ZOTERO_ASK_VERSION = '0.2.3';
 const ZOTERO_ASK_PREF = 'extensions.zoteroAsk.';
 const ZOTERO_ASK_DEFAULT_WIDTH = 390;
+// A turn fails only when Codex sends nothing for this long; long answers keep streaming past it.
+const ZOTERO_ASK_TURN_IDLE_MS = 5 * 60 * 1000;
+const ZOTERO_ASK_TURN_LIMIT_MS = 30 * 60 * 1000;
 let ZOTERO_ASK_ROOT = '';
 let ZOTERO_ASK_CORE = null;
 // Everything bootstrap.js uses from core.js; startup checks the loaded core provides all of it.
-const ZOTERO_ASK_CORE_API = ['DEFAULT_INSTRUCTIONS', 'SIGN_OUT_NOTE', 'buildPrompt', 'chooseVisualPages', 'composerKeyAction',
+const ZOTERO_ASK_CORE_API = ['DEFAULT_INSTRUCTIONS', 'SIGN_OUT_NOTE', 'buildPrompt', 'chooseVisualPages', 'clampPanelWidth', 'composerKeyAction',
   'createAccountFlow', 'createMathRenderer', 'isAuthError', 'normalizeChatState', 'normalizeInstructions', 'normalizeModels',
   'redactDiagnostics', 'renderMarkdown', 'selectionFromPopup', 'withDeadline'];
 let ZOTERO_ASK_SERVER = null;
@@ -144,6 +147,12 @@ function ZoteroAsk_renderSelectionAction(event) {
   const { reader, doc, params, append } = event;
   const selection = ZOTERO_ASK_CORE.selectionFromPopup(params, ZoteroAsk_currentPage(reader));
   if (!reader || !doc || !append || reader.type !== 'pdf' || !selection) return;
+  // Zotero shows this popup whenever text is selected; while Ask is open, attach the passage right away.
+  const open = ZOTERO_ASK_DOCS.get(doc);
+  if (open?.panel.isConnected && !open.panel.hidden) {
+    open.selection = selection;
+    ZoteroAsk_renderSelection(open);
+  }
   const button = doc.createElement('button');
   button.type = 'button';
   button.className = 'zotero-ask-selection-action';
@@ -198,11 +207,11 @@ function ZoteroAsk_togglePanel(reader, doc) {
   }
 }
 
-function ZoteroAsk_ensureStyle(doc) {
+function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
   if (doc.getElementById('zotero-ask-style')) return;
   const style = doc.createElement('style');
   style.id = 'zotero-ask-style';
-  style.textContent = ZoteroAsk_katexCSS() + `
+  style.textContent = (content ? ZoteroAsk_katexCSS() : '') + `
     #zotero-ask-toolbar-button { min-width:42px; font-weight:600; }
     #zotero-ask-toolbar-button[aria-pressed="true"] { color:light-dark(#2563c9,#8ab4ff); }
     .zotero-ask-selection-action { font:inherit; }
@@ -210,8 +219,10 @@ function ZoteroAsk_ensureStyle(doc) {
     #zotero-ask-panel[hidden] { display:none !important; }
     #zotero-ask-panel * { box-sizing:border-box; }
     #zotero-ask-panel [hidden] { display:none !important; }
-    #zotero-ask-panel .za-resize { position:absolute; inset:0 auto 0 -3px; width:6px; cursor:ew-resize; z-index:1; }
-    #zotero-ask-panel .za-resize:hover { background:linear-gradient(to right,transparent 2px,var(--za-accent) 2px,var(--za-accent) 4px,transparent 4px); }
+    #zotero-ask-panel .za-resize { position:absolute; inset:0 auto 0 -4px; width:8px; cursor:ew-resize; z-index:1; touch-action:none; }
+    #zotero-ask-panel.za-resizing .za-frame { pointer-events:none; }
+    #zotero-ask-panel > .za-frame { display:block; flex:1; min-height:0; width:100%; border:0; background:transparent; }
+    #zotero-ask-panel .za-resize:hover, #zotero-ask-panel.za-resizing .za-resize { background:linear-gradient(to right,transparent 2px,var(--za-accent) 2px,var(--za-accent) 4px,transparent 4px); }
     #zotero-ask-panel button, #zotero-ask-panel select, #zotero-ask-panel textarea, #zotero-ask-panel input { color:inherit; font:inherit; }
     #zotero-ask-panel button { cursor:pointer; }
     #zotero-ask-panel :is(button,select,input,textarea):focus-visible { outline:2px solid var(--za-accent); outline-offset:1px; }
@@ -304,6 +315,11 @@ function ZoteroAsk_ensureStyle(doc) {
       #zotero-ask-panel .za-send { forced-color-adjust:none; background:ButtonText; color:ButtonFace; }
     }
   `;
+  if (content) style.textContent += `
+    html, body { margin:0; height:100%; overflow:hidden; background:transparent; }
+    #zotero-ask-panel .za-messages, #zotero-ask-panel .za-paper, #zotero-ask-panel .za-selection-text, #zotero-ask-panel textarea { -moz-user-select:text; user-select:text; }
+    #zotero-ask-panel.za-root { position:static; inset:auto; width:auto !important; max-width:none; height:100%; border-left:0; box-shadow:none; z-index:auto; }
+  `;
   (doc.head || doc.documentElement).appendChild(style);
 }
 
@@ -316,8 +332,21 @@ function ZoteroAsk_createPanel(reader, doc) {
   panel.id = 'zotero-ask-panel';
   panel.hidden = true;
   panel.setAttribute('aria-label', 'Zotero Ask');
-  panel.innerHTML = `
-    <div class="za-resize" title="Resize Ask panel"></div>
+  panel.innerHTML = '<div class="za-resize" title="Drag to resize · double-click to reset"></div><iframe class="za-frame" title="Zotero Ask"></iframe>';
+  doc.body.appendChild(panel);
+
+  // Zotero's reader handles keyboard shortcuts on its own window before any panel listener runs, and it does not
+  // treat <textarea> as a text box: typing r or l started Read Aloud, other letters switched tools, and Backspace
+  // could delete a selected annotation. Building the panel in its own document keeps Ask's keys out of the reader.
+  const frameDoc = panel.querySelector('.za-frame').contentDocument;
+  frameDoc.open();
+  frameDoc.write('<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>');
+  frameDoc.close();
+  ZoteroAsk_ensureStyle(frameDoc, { content: true });
+  const root = frameDoc.createElement('div');
+  root.id = 'zotero-ask-panel';
+  root.className = 'za-root';
+  root.innerHTML = `
     <header>
       <div class="za-title-row"><div class="za-title">Ask</div><button class="za-icon za-settings-toggle" title="Account and settings" aria-label="Account and settings" aria-expanded="false" aria-controls="za-settings">⚙︎</button><button class="za-icon za-new" title="New chat" aria-label="New chat">＋</button><button class="za-icon za-close" title="Close Ask" aria-label="Close Ask">×</button></div>
       <div class="za-paper">Open a PDF in Zotero to ask about it.</div>
@@ -341,32 +370,30 @@ function ZoteroAsk_createPanel(reader, doc) {
     <div class="za-account-prompt" aria-live="polite" hidden><span class="za-account-prompt-text"></span><button type="button" class="za-button za-prompt-sign-in">Sign in</button></div>
     <main class="za-messages" role="log" aria-live="polite"></main>
     <div class="za-save-note">Chats are saved locally with this PDF attachment.</div>
-    <form class="za-composer"><p class="za-composer-intro" id="za-composer-intro">Ask about this paper. Highlight a passage to focus your question.</p><div class="za-selection" hidden><div class="za-selection-head"><span class="za-selection-label"></span><button type="button" class="za-selection-clear" aria-label="Remove selected passage" title="Remove selected passage">×</button></div><div class="za-selection-text"></div></div><textarea aria-label="Ask a question" aria-describedby="za-composer-intro za-key-hint" placeholder="Ask about this paper…"></textarea><div class="za-submit-row"><span class="za-key-hint" id="za-key-hint">Enter to send · Shift+Enter for a new line</span><button class="za-send" type="submit">Ask</button></div><p class="za-hint">Paper text, relevant page images, any selected passage, and your response instructions go to your Codex model.</p></form>
+    <form class="za-composer"><p class="za-composer-intro" id="za-composer-intro">Ask about this paper. Select a passage in the PDF to focus your question.</p><div class="za-selection" hidden><div class="za-selection-head"><span class="za-selection-label"></span><button type="button" class="za-selection-clear" aria-label="Remove selected passage" title="Remove selected passage">×</button></div><div class="za-selection-text"></div></div><textarea aria-label="Ask a question" aria-describedby="za-composer-intro za-key-hint" placeholder="Ask about this paper…"></textarea><div class="za-submit-row"><span class="za-key-hint" id="za-key-hint">Enter to send · Shift+Enter for a new line</span><button class="za-send" type="submit">Ask</button></div><p class="za-hint">Paper text, relevant page images, any selected passage, and your response instructions go to your Codex model.</p></form>
   `;
-  doc.body.appendChild(panel);
+  frameDoc.body.appendChild(root);
 
   const state = {
-    reader, doc, panel, button: doc.getElementById('zotero-ask-toolbar-button'),
-    input: panel.querySelector('.za-composer textarea'), tabs: panel.querySelector('.za-chat-tabs'),
-    settings: panel.querySelector('.za-settings'), instructions: panel.querySelector('.za-instructions'), authExpired: false,
-    log: panel.querySelector('.za-messages'), status: panel.querySelector('.za-status'),
-    paper: panel.querySelector('.za-paper'), modelSelect: panel.querySelector('.za-model'),
-    effortSelect: panel.querySelector('.za-effort'), fastToggle: panel.querySelector('.za-fast-toggle'),
-    sendButton: panel.querySelector('.za-send'), selectionNode: panel.querySelector('.za-selection'),
+    reader, doc: frameDoc, readerDoc: doc, panel, root, button: doc.getElementById('zotero-ask-toolbar-button'),
+    input: root.querySelector('.za-composer textarea'), tabs: root.querySelector('.za-chat-tabs'),
+    settings: root.querySelector('.za-settings'), instructions: root.querySelector('.za-instructions'), authExpired: false,
+    log: root.querySelector('.za-messages'), status: root.querySelector('.za-status'),
+    paper: root.querySelector('.za-paper'), modelSelect: root.querySelector('.za-model'),
+    effortSelect: root.querySelector('.za-effort'), fastToggle: root.querySelector('.za-fast-toggle'),
+    sendButton: root.querySelector('.za-send'), selectionNode: root.querySelector('.za-selection'),
     selection: null, item: null, metadata: '', documentCache: null, chats: [], activeChatID: '',
-    sessions: new Map(), models: [], busy: false, resizeDrag: null
+    sessions: new Map(), running: new Map(), sentPages: new Map(), documentLoading: null, statusFromRun: false, models: [], resizeDrag: null
   };
-  for (const other of ZOTERO_ASK_PANELS) if (other.doc === doc) ZOTERO_ASK_PANELS.delete(other);
+  for (const other of ZOTERO_ASK_PANELS) if (other.readerDoc === doc) ZOTERO_ASK_PANELS.delete(other);
   ZOTERO_ASK_PANELS.add(state);
 
-  const savedWidth = Number(ZoteroAsk_pref('width', ZOTERO_ASK_DEFAULT_WIDTH));
-  panel.style.width = `${Math.max(320, Math.min(720, Number.isFinite(savedWidth) ? savedWidth : ZOTERO_ASK_DEFAULT_WIDTH))}px`;
-  panel.querySelector('.za-close').addEventListener('click', () => { panel.hidden = true; state.button?.setAttribute('aria-pressed', 'false'); });
-  panel.querySelector('.za-new').addEventListener('click', () => ZoteroAsk_newChat(state));
-  panel.querySelector('.za-composer').addEventListener('submit', event => { event.preventDefault(); void ZoteroAsk_submit(state); });
+  root.querySelector('.za-close').addEventListener('click', () => { panel.hidden = true; state.button?.setAttribute('aria-pressed', 'false'); });
+  root.querySelector('.za-new').addEventListener('click', () => ZoteroAsk_newChat(state));
+  root.querySelector('.za-composer').addEventListener('submit', event => { event.preventDefault(); void ZoteroAsk_submit(state); });
   state.input.addEventListener('keydown', event => {
     const action = ZOTERO_ASK_CORE.composerKeyAction(event, {
-      busy: state.busy, disabled: state.input.disabled || state.sendButton.disabled, text: state.input.value
+      busy: ZoteroAsk_isRunning(state), disabled: state.input.disabled || state.sendButton.disabled, text: state.input.value
     });
     if (action === 'default') return;
     event.preventDefault();
@@ -375,40 +402,61 @@ function ZoteroAsk_createPanel(reader, doc) {
   state.modelSelect.addEventListener('change', () => ZoteroAsk_modelChanged(state));
   state.effortSelect.addEventListener('change', () => ZoteroAsk_setPref('effort', state.effortSelect.value));
   state.fastToggle.addEventListener('change', () => ZoteroAsk_setPref('fast', state.fastToggle.checked));
-  panel.querySelector('.za-resize').addEventListener('pointerdown', event => {
+  // Resize by dragging the left edge. Pointer capture keeps the drag attached to the handle while the
+  // pointer crosses the PDF view or the panel's own document, and guarantees the release is seen.
+  const handle = panel.querySelector('.za-resize');
+  const applyWidth = width => {
+    panel.style.width = `${ZOTERO_ASK_CORE.clampPanelWidth(width, doc.defaultView?.innerWidth)}px`;
+  };
+  const saveWidth = () => ZoteroAsk_setPref('width', Math.round(panel.getBoundingClientRect().width));
+  applyWidth(ZoteroAsk_pref('width', ZOTERO_ASK_DEFAULT_WIDTH));
+  handle.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
     event.preventDefault();
-    state.resizeDrag = { x: event.screenX, width: panel.getBoundingClientRect().width };
-    const move = moveEvent => {
-      if (!state.resizeDrag) return;
-      const width = Math.max(320, Math.min(720, state.resizeDrag.width + state.resizeDrag.x - moveEvent.screenX));
-      panel.style.width = `${width}px`;
-      ZoteroAsk_setPref('width', width);
-    };
-    const up = () => { state.resizeDrag = null; doc.removeEventListener('pointermove', move); doc.removeEventListener('pointerup', up); };
-    doc.addEventListener('pointermove', move);
-    doc.addEventListener('pointerup', up);
+    try { handle.setPointerCapture(event.pointerId); } catch (_) {}
+    state.resizeDrag = { id: event.pointerId, x: event.clientX, width: panel.getBoundingClientRect().width };
+    panel.classList.add('za-resizing');
   });
-  const settingsToggle = panel.querySelector('.za-settings-toggle');
+  handle.addEventListener('pointermove', event => {
+    const drag = state.resizeDrag;
+    if (drag && event.pointerId === drag.id) applyWidth(drag.width + drag.x - event.clientX);
+  });
+  const endDrag = () => {
+    if (!state.resizeDrag) return;
+    state.resizeDrag = null;
+    panel.classList.remove('za-resizing');
+    saveWidth();
+  };
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(type, endDrag);
+  handle.addEventListener('dblclick', () => { applyWidth(ZOTERO_ASK_DEFAULT_WIDTH); saveWidth(); });
+  doc.defaultView?.addEventListener('resize', () => { if (!panel.hidden) applyWidth(panel.getBoundingClientRect().width); });
+  root.addEventListener('click', event => {
+    const link = event.target.closest?.('a[href]');
+    if (!link) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(link.href)) Zotero.launchURL(link.href);
+  });
+  const settingsToggle = root.querySelector('.za-settings-toggle');
   settingsToggle.addEventListener('click', () => {
     state.settings.hidden = !state.settings.hidden;
     settingsToggle.setAttribute('aria-expanded', String(!state.settings.hidden));
     if (!state.settings.hidden && ZoteroAsk_account().status.state !== 'signing-in') ZoteroAsk_account().refresh().catch(error => ZoteroAsk_logError('account check failed', error));
   });
   for (const selector of ['.za-sign-in', '.za-prompt-sign-in']) {
-    panel.querySelector(selector).addEventListener('click', () => { ZoteroAsk_account().signIn().catch(error => ZoteroAsk_logError('sign-in failed', error)); });
+    root.querySelector(selector).addEventListener('click', () => { ZoteroAsk_account().signIn().catch(error => ZoteroAsk_logError('sign-in failed', error)); });
   }
-  panel.querySelector('.za-cancel-sign-in').addEventListener('click', () => { ZoteroAsk_account().cancelSignIn().catch(error => ZoteroAsk_logError('cancelling sign-in failed', error)); });
-  panel.querySelector('#za-sign-out-note').textContent = ZOTERO_ASK_CORE.SIGN_OUT_NOTE;
-  const signOutConfirm = panel.querySelector('.za-sign-out-confirm');
-  panel.querySelector('.za-sign-out').addEventListener('click', () => {
+  root.querySelector('.za-cancel-sign-in').addEventListener('click', () => { ZoteroAsk_account().cancelSignIn().catch(error => ZoteroAsk_logError('cancelling sign-in failed', error)); });
+  root.querySelector('#za-sign-out-note').textContent = ZOTERO_ASK_CORE.SIGN_OUT_NOTE;
+  const signOutConfirm = root.querySelector('.za-sign-out-confirm');
+  root.querySelector('.za-sign-out').addEventListener('click', () => {
     signOutConfirm.hidden = false;
-    panel.querySelector('.za-confirm-sign-out').focus();
+    root.querySelector('.za-confirm-sign-out').focus();
   });
-  panel.querySelector('.za-keep-signed-in').addEventListener('click', () => {
+  root.querySelector('.za-keep-signed-in').addEventListener('click', () => {
     signOutConfirm.hidden = true;
-    panel.querySelector('.za-sign-out').focus();
+    root.querySelector('.za-sign-out').focus();
   });
-  panel.querySelector('.za-confirm-sign-out').addEventListener('click', async () => {
+  root.querySelector('.za-confirm-sign-out').addEventListener('click', async () => {
     signOutConfirm.hidden = true;
     state.status.classList.remove('za-error');
     try {
@@ -419,14 +467,14 @@ function ZoteroAsk_createPanel(reader, doc) {
       state.status.classList.add('za-error');
     }
   });
-  panel.querySelector('.za-selection-clear').addEventListener('click', () => {
+  root.querySelector('.za-selection-clear').addEventListener('click', () => {
     state.selection = null;
     ZoteroAsk_renderSelection(state);
     state.input.focus();
   });
   state.instructions.value = ZoteroAsk_instructions();
   state.instructions.addEventListener('input', () => ZoteroAsk_setPref('instructions', ZOTERO_ASK_CORE.normalizeInstructions(state.instructions.value)));
-  panel.querySelector('.za-reset-instructions').addEventListener('click', () => {
+  root.querySelector('.za-reset-instructions').addEventListener('click', () => {
     state.instructions.value = ZOTERO_ASK_CORE.DEFAULT_INSTRUCTIONS;
     ZoteroAsk_setPref('instructions', ZOTERO_ASK_CORE.DEFAULT_INSTRUCTIONS);
     state.instructions.focus();
@@ -442,7 +490,7 @@ function ZoteroAsk_createPanel(reader, doc) {
     if (tab) { state.activeChatID = tab.dataset.chatId; ZoteroAsk_renderChats(state); void ZoteroAsk_saveChats(state); }
   });
   state.sendButton.addEventListener('click', event => {
-    if (state.busy) { event.preventDefault(); void ZoteroAsk_cancel(state); }
+    if (ZoteroAsk_isRunning(state)) { event.preventDefault(); void ZoteroAsk_cancel(state); }
   });
   return state;
 }
@@ -454,12 +502,14 @@ async function ZoteroAsk_activateDocument(state, reader) {
     const key = `${item.libraryID}-${item.key}`;
     if (state.item?.cacheKey === key) {
       void ZoteroAsk_refreshAccountAndModels(state);
+      ZoteroAsk_loadDocument(state, { quiet: true }).catch(() => {});
       return;
     }
     state.item = { id: item.id, key: item.key, libraryID: item.libraryID, cacheKey: key, path: null, fingerprint: '' };
     state.reader = reader;
     state.documentCache = null;
     state.sessions.clear();
+    state.sentPages.clear();
     state.metadata = await ZoteroAsk_itemMetadata(item);
     state.paper.textContent = state.metadata;
     const saved = await ZoteroAsk_readChats(key);
@@ -469,6 +519,7 @@ async function ZoteroAsk_activateDocument(state, reader) {
     ZoteroAsk_renderChats(state);
     state.status.textContent = '';
     void ZoteroAsk_refreshAccountAndModels(state);
+    ZoteroAsk_loadDocument(state, { quiet: true }).catch(() => {});
   } catch (error) {
     state.status.textContent = error?.message || String(error);
     state.status.classList.add('za-error');
@@ -507,6 +558,11 @@ function ZoteroAsk_activeChat(state) {
 async function ZoteroAsk_closeChat(state, id) {
   const chat = state.chats.find(entry => entry.id === id);
   if (!chat) return;
+  if (state.running.has(id)) {
+    state.status.textContent = 'Stop this chat’s question before closing it.';
+    state.statusFromRun = false;
+    return;
+  }
   if (chat.messages.length && !state.doc.defaultView.confirm(`Remove “${chat.title}” and its saved conversation?`)) return;
   state.chats = state.chats.filter(entry => entry.id !== id);
   state.sessions.delete(id);
@@ -529,6 +585,7 @@ function ZoteroAsk_renameChat(state, id) {
 
 function ZoteroAsk_renderChats(state) {
   if (!state.tabs) return;
+  ZoteroAsk_syncRun(state);
   state.tabs.replaceChildren();
   for (const chat of state.chats) {
     const tab = state.doc.createElement('button');
@@ -652,10 +709,10 @@ function ZoteroAsk_account() {
   ZOTERO_ASK_ACCOUNT = ZOTERO_ASK_CORE.createAccountFlow({
     getServer: ZoteroAsk_getServer,
     openURL: url => Zotero.launchURL(url),
-    isBusy: () => ZoteroAsk_openPanels().some(state => state.busy) || (ZOTERO_ASK_SERVER?.turns.size || 0) > 0,
+    isBusy: () => ZoteroAsk_openPanels().some(state => state.running.size > 0) || (ZOTERO_ASK_SERVER?.turns.size || 0) > 0,
     resetSessions: async () => {
       // Threads belong to the previous account. Conversations stay; the next question starts a fresh thread.
-      for (const state of ZoteroAsk_openPanels()) { state.sessions.clear(); state.authExpired = false; }
+      for (const state of ZoteroAsk_openPanels()) { state.sessions.clear(); state.sentPages.clear(); state.authExpired = false; }
       if (ZOTERO_ASK_SERVER && !ZOTERO_ASK_SERVER.turns.size) ZOTERO_ASK_SERVER.close();
     },
     refreshModels: async () => { await Promise.all(ZoteroAsk_openPanels().map(state => ZoteroAsk_loadModels(state))); },
@@ -679,8 +736,8 @@ async function ZoteroAsk_refreshAccountAndModels(state) {
 
 function ZoteroAsk_renderAccount(state) {
   const status = ZoteroAsk_account().status;
-  const find = selector => state.panel.querySelector(selector);
-  const busy = ZoteroAsk_openPanels().some(panel => panel.busy);
+  const find = selector => state.root.querySelector(selector);
+  const busy = ZoteroAsk_openPanels().some(panel => panel.running.size > 0);
   const statusNode = find('.za-account-status');
   statusNode.textContent = status.text;
   statusNode.dataset.state = status.state;
@@ -873,6 +930,15 @@ class ZoteroAsk_CodexServer {
       return;
     }
     const params = message.params || {};
+    const active = typeof params.threadId === 'string' ? this.turns.get(params.threadId) : null;
+    active?.touch?.();
+    if (message.method === 'error' && active) {
+      // Codex reports recoverable problems (for example a dropped stream) and retries by itself.
+      const detail = ZOTERO_ASK_CORE.redactDiagnostics(params.error?.message || 'a temporary problem', { home: ZoteroAsk_home(), limit: 160 });
+      if (params.willRetry) active.onProgress?.(`Codex is retrying after ${detail}`);
+      else active.lastError = detail;
+      return;
+    }
     if (message.method === 'account/login/completed') { ZOTERO_ASK_ACCOUNT?.loginCompleted(params).catch(error => ZoteroAsk_logError('sign-in completion failed', error)); return; }
     if (message.method === 'item/agentMessage/delta') {
       const turn = this.turns.get(params.threadId);
@@ -888,7 +954,7 @@ class ZoteroAsk_CodexServer {
       if (!turn) return;
       this.turns.delete(params.threadId);
       if (params.turn?.status === 'completed' && turn.answer) turn.resolve(turn.answer);
-      else turn.reject(new Error(params.turn?.error?.message || 'Codex could not answer this question.'));
+      else turn.reject(new Error(params.turn?.error?.message || turn.lastError || 'Codex could not answer this question.'));
     }
   }
 
@@ -916,24 +982,38 @@ class ZoteroAsk_CodexServer {
     return result.thread.id;
   }
 
-  async ask(threadID, input, model, effort, fast, onDelta) {
+  async ask(threadID, input, model, effort, fast, onDelta, onProgress = () => {}) {
     return await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let idle;
+      const expire = message => {
+        const turn = this.turns.get(threadID);
+        if (!turn) return;
         this.turns.delete(threadID);
-        void this.rpc('turn/interrupt', { threadId: threadID }).catch(() => {});
-        reject(new Error('This answer took too long. Try again.'));
-      }, 240000);
+        if (turn.turnID) void this.rpc('turn/interrupt', { threadId: threadID, turnId: turn.turnID }).catch(() => {});
+        turn.reject(new Error(message));
+      };
+      const limit = setTimeout(() => expire('This answer ran for 30 minutes and was stopped.'), ZOTERO_ASK_TURN_LIMIT_MS);
+      const settle = () => { clearTimeout(idle); clearTimeout(limit); };
       this.turns.set(threadID, {
-        answer: '', onDelta,
-        resolve: answer => { clearTimeout(timer); resolve(answer); },
-        reject: error => { clearTimeout(timer); reject(error); }
+        answer: '', onDelta, onProgress,
+        // Any event for this turn (reasoning, output, retries) shows Codex is still working.
+        touch: () => {
+          clearTimeout(idle);
+          idle = setTimeout(() => expire(`Codex sent nothing for ${ZOTERO_ASK_TURN_IDLE_MS / 60000} minutes, so the answer was stopped. Try again.`), ZOTERO_ASK_TURN_IDLE_MS);
+        },
+        resolve: answer => { settle(); resolve(answer); },
+        reject: error => { settle(); reject(error); }
       });
+      this.turns.get(threadID).touch();
       void this.rpc('turn/start', {
         threadId: threadID, input, model: model.id, effort, serviceTier: fast ? 'fast' : null,
         cwd: PathUtils.tempDir, approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false }
+      }).then(result => {
+        const turn = this.turns.get(threadID);
+        if (turn && !turn.turnID && result?.turn?.id) turn.turnID = result.turn.id;
       }).catch(error => {
         const turn = this.turns.get(threadID);
-        if (turn) { this.turns.delete(threadID); clearTimeout(timer); turn.reject(error); }
+        if (turn) { this.turns.delete(threadID); turn.reject(error); }
       });
     });
   }
@@ -963,7 +1043,15 @@ class ZoteroAsk_CodexServer {
   }
 }
 
-async function ZoteroAsk_loadDocument(state) {
+// Read the PDF text once; callers that arrive while a read is running share it.
+function ZoteroAsk_loadDocument(state, { quiet = false } = {}) {
+  if (!state.documentLoading) {
+    state.documentLoading = ZoteroAsk_readDocument(state, quiet).finally(() => { state.documentLoading = null; });
+  }
+  return state.documentLoading;
+}
+
+async function ZoteroAsk_readDocument(state, quiet) {
   if (!state.item) throw new Error('Open a PDF in Zotero to use Ask.');
   const attachment = await Zotero.Items.getAsync(state.item.id);
   const path = await attachment.getFilePathAsync();
@@ -971,7 +1059,7 @@ async function ZoteroAsk_loadDocument(state) {
   const fileInfo = await IOUtils.stat(path);
   const fingerprint = `${path}:${fileInfo.size}:${fileInfo.lastModified || 0}`;
   if (state.documentCache?.fingerprint === fingerprint) return state.documentCache;
-  state.status.textContent = 'Reading every PDF page…';
+  if (!quiet) state.status.textContent = 'Reading every PDF page…';
   const pdfWindow = ZoteroAsk_unwrap(state.reader?._internalReader?._primaryView?._iframeWindow);
   const pdfApp = pdfWindow?.PDFViewerApplication;
   const pdfDoc = pdfApp?.pdfDocument;
@@ -991,7 +1079,7 @@ async function ZoteroAsk_loadDocument(state) {
       const text = content.items.filter(item => typeof item.str === 'string').map(item => item.str).join(' ')
         .replace(/\s+/g, ' ').trim();
       pages[number - 1] = { number, label: String(labels[number - 1] || number), text };
-      if (number === 1 || number % 25 === 0 || number === total) state.status.textContent = `Reading PDF text · ${number} / ${total}`;
+      if (!quiet && (number === 1 || number % 25 === 0 || number === total)) state.status.textContent = `Reading PDF text · ${number} / ${total}`;
     }
   });
   await Promise.all(workers);
@@ -1037,50 +1125,61 @@ async function ZoteroAsk_writeImages(images) {
 }
 
 async function ZoteroAsk_submit(state) {
-  if (state.busy || state.input.disabled || state.sendButton.disabled) return;
+  if (ZoteroAsk_isRunning(state) || state.input.disabled || state.sendButton.disabled) return;
   const question = state.input.value.trim();
   if (!question || !state.item) return;
-  state.status.classList.remove('za-error');
   const chat = ZoteroAsk_activeChat(state);
   if (!chat) { ZoteroAsk_newChat(state); return; }
+  const chatID = chat.id;
   const selection = state.selection;
   state.selection = null;
-  state.selectionNode.hidden = true;
+  ZoteroAsk_renderSelection(state);
   const userMessage = { role: 'user', text: question, selection: selection?.text || '' };
   chat.messages.push(userMessage);
   if (chat.title.startsWith('Chat ') && chat.messages.length === 1) chat.title = question.slice(0, 38) || chat.title;
   const assistantMessage = { role: 'assistant', text: '', model: '' };
   chat.messages.push(assistantMessage);
   state.input.value = '';
-  state.busy = true;
-  state.sendButton.textContent = 'Stop';
+  const run = { status: 'Preparing the full paper…', cancelled: false, started: 0, phase: '', note: '', timer: null };
+  state.running.set(chatID, run);
   ZoteroAsk_renderAccount(state);
-  state.status.textContent = 'Preparing the full paper…';
   await ZoteroAsk_saveChats(state);
   ZoteroAsk_renderChats(state);
+  const stopIfCancelled = () => { if (run.cancelled) throw new Error('Question stopped.'); };
+  // Elapsed time while the model thinks and writes, so a long answer visibly makes progress.
+  const tick = () => {
+    if (state.running.get(chatID) !== run || !run.phase) return;
+    ZoteroAsk_setRunStatus(state, chatID, `${run.phase}… ${Math.round((Date.now() - run.started) / 1000)} s${run.note ? ` · ${run.note}` : ''}`);
+    run.timer = setTimeout(tick, 1000);
+  };
   let imagePaths = [];
   let threadID = '';
+  let failed = false;
   try {
     const [server, documentCache] = await Promise.all([ZoteroAsk_getServer(), ZoteroAsk_loadDocument(state)]);
+    stopIfCancelled();
     const model = state.models.find(entry => entry.id === state.modelSelect.value) || (await server.getModels())[0];
     if (!model) throw new Error('No Codex model is available.');
     const effort = state.effortSelect.value || model.defaultEffort || 'high';
     const fast = state.fastToggle.checked && model.fast;
-    const selectionPage = selection?.page;
-    const chosenPages = ZOTERO_ASK_CORE.chooseVisualPages(documentCache.pages, question, { selectionPage, limit: 8 });
-    state.status.textContent = `Rendering ${chosenPages.length} relevant page image${chosenPages.length === 1 ? '' : 's'}…`;
+    threadID = state.sessions.get(chatID) || '';
+    const newThread = !threadID;
+    // A thread keeps the page images it has already received; attach only pages it has not seen.
+    const sentPages = newThread ? new Set() : (state.sentPages.get(chatID) || new Set());
+    const chosenPages = ZOTERO_ASK_CORE.chooseVisualPages(documentCache.pages, question, { selectionPage: selection?.page, limit: 8 })
+      .filter(number => !sentPages.has(number));
+    if (chosenPages.length) ZoteroAsk_setRunStatus(state, chatID, `Rendering ${chosenPages.length} page image${chosenPages.length === 1 ? '' : 's'}…`);
     const images = await Promise.all(chosenPages.map(async number => ({
       number, source: `PDF page ${documentCache.pages[number - 1].label}`,
       data: await ZoteroAsk_renderPage(documentCache, number)
     })));
     imagePaths = await ZoteroAsk_writeImages(images);
-    const chatID = chat.id;
-    threadID = state.sessions.get(chatID) || '';
-    const newThread = !threadID;
+    stopIfCancelled();
     if (newThread) {
-      state.status.textContent = 'Connecting to your Codex model…';
+      ZoteroAsk_setRunStatus(state, chatID, 'Connecting to your Codex model…');
       threadID = await server.startThread(model, fast);
       state.sessions.set(chatID, threadID);
+      stopIfCancelled();
     }
     const pagesForPrompt = newThread ? documentCache.pages : [];
     const history = newThread ? chat.messages.slice(0, -2) : [];
@@ -1089,41 +1188,82 @@ async function ZoteroAsk_submit(state) {
     const input = [{ type: 'text', text: prompt, text_elements: [] }, ...imagePaths.map(image => ({ type: 'localImage', path: image.path }))];
     const effortLabel = effort ? (effort === 'xhigh' ? 'Extra high' : effort[0].toUpperCase() + effort.slice(1)) : 'Default';
     assistantMessage.model = `${model.label} · ${effortLabel}${fast ? ' · Fast' : ''}`;
-    state.status.textContent = 'Thinking…';
+    run.started = Date.now();
+    run.phase = 'Thinking';
+    tick();
     const answer = await server.ask(threadID, input, model, effort, fast, delta => {
+      if (run.phase !== 'Writing') { run.phase = 'Writing'; run.note = ''; }
       assistantMessage.text += delta;
       if (ZoteroAsk_activeChat(state)?.id === chatID) {
         const bubble = state.log.lastElementChild?.querySelector('.za-message-content');
         if (bubble) bubble.textContent = assistantMessage.text;
         state.log.scrollTop = state.log.scrollHeight;
       }
-    });
+    }, note => { run.note = note; });
     assistantMessage.text = answer;
-    state.status.textContent = '';
+    for (const image of images) sentPages.add(image.number);
+    state.sentPages.set(chatID, sentPages);
   } catch (error) {
-    assistantMessage.text = error?.message || String(error);
-    assistantMessage.model = 'Zotero Ask';
-    state.status.textContent = 'Could not complete the question.';
-    state.status.classList.add('za-error');
-    if (threadID) state.sessions.delete(chat.id);
+    failed = true;
+    if (assistantMessage.text) {
+      // Keep what already arrived; say why it ended.
+      assistantMessage.text += run.cancelled ? '\n\n*Stopped before completion.*' : `\n\n*Stopped: ${error?.message || error}*`;
+    } else {
+      assistantMessage.text = error?.message || String(error);
+      assistantMessage.model = 'Zotero Ask';
+    }
+    if (threadID) { state.sessions.delete(chatID); state.sentPages.delete(chatID); }
     if (ZOTERO_ASK_CORE.isAuthError(assistantMessage.text)) {
       state.authExpired = true;
-      state.status.textContent = 'Your Codex sign-in expired. Sign in to continue.';
       ZoteroAsk_account().refresh().catch(refreshError => ZoteroAsk_logError('account check failed', refreshError));
     }
   } finally {
+    clearTimeout(run.timer);
     for (const image of imagePaths) { try { await IOUtils.remove(image.path, { ignoreAbsent: true }); } catch (_) {} }
-    state.busy = false;
-    state.sendButton.textContent = 'Ask';
+    if (state.running.get(chatID) === run) state.running.delete(chatID);
     ZoteroAsk_renderAccount(state);
     ZoteroAsk_renderChats(state);
+    if (failed && !run.cancelled && state.activeChatID === chatID) {
+      state.status.textContent = state.authExpired ? 'Your Codex sign-in expired. Sign in to continue.' : 'Could not complete the question.';
+      state.status.classList.add('za-error');
+      state.statusFromRun = false;
+    }
     await ZoteroAsk_saveChats(state);
   }
 }
 
+function ZoteroAsk_isRunning(state, chatID = state.activeChatID) {
+  return state.running.has(chatID);
+}
+
+// Show a chat's progress in the status line only while that chat is the one on screen.
+function ZoteroAsk_setRunStatus(state, chatID, text) {
+  const run = state.running.get(chatID);
+  if (run) run.status = text;
+  if (state.activeChatID !== chatID) return;
+  state.status.classList.remove('za-error');
+  state.status.textContent = text;
+  state.statusFromRun = true;
+}
+
+// Match the Ask/Stop button and status line to the chat on screen.
+function ZoteroAsk_syncRun(state) {
+  const run = state.running.get(state.activeChatID);
+  state.sendButton.textContent = run ? 'Stop' : 'Ask';
+  if (run) {
+    state.status.classList.remove('za-error');
+    state.status.textContent = run.status;
+    state.statusFromRun = true;
+  } else if (state.statusFromRun) {
+    state.status.textContent = '';
+    state.statusFromRun = false;
+  }
+}
+
 async function ZoteroAsk_cancel(state) {
-  const chat = ZoteroAsk_activeChat(state);
-  if (!chat) return;
-  const thread = state.sessions.get(chat.id);
+  const run = state.running.get(state.activeChatID);
+  if (!run) return;
+  run.cancelled = true;
+  const thread = state.sessions.get(state.activeChatID);
   if (thread && ZOTERO_ASK_SERVER) await ZOTERO_ASK_SERVER.interrupt(thread);
 }
