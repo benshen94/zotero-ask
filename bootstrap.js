@@ -1,5 +1,5 @@
 const ZOTERO_ASK_ID = 'zotero-ask@benshenhar.com';
-const ZOTERO_ASK_VERSION = '0.2.1';
+const ZOTERO_ASK_VERSION = '0.2.2';
 const ZOTERO_ASK_PREF = 'extensions.zoteroAsk.';
 const ZOTERO_ASK_DEFAULT_WIDTH = 390;
 let ZOTERO_ASK_ROOT = '';
@@ -7,7 +7,7 @@ let ZOTERO_ASK_CORE = null;
 // Everything bootstrap.js uses from core.js; startup checks the loaded core provides all of it.
 const ZOTERO_ASK_CORE_API = ['DEFAULT_INSTRUCTIONS', 'SIGN_OUT_NOTE', 'buildPrompt', 'chooseVisualPages', 'composerKeyAction',
   'createAccountFlow', 'createMathRenderer', 'isAuthError', 'normalizeChatState', 'normalizeInstructions', 'normalizeModels',
-  'redactDiagnostics', 'renderMarkdown', 'withDeadline'];
+  'redactDiagnostics', 'renderMarkdown', 'selectionFromPopup', 'withDeadline'];
 let ZOTERO_ASK_SERVER = null;
 let ZOTERO_ASK_DOCS = new WeakMap();
 let ZOTERO_ASK_RENDERED_DOCS = new Set();
@@ -142,15 +142,13 @@ function ZoteroAsk_renderToolbar(event) {
 
 function ZoteroAsk_renderSelectionAction(event) {
   const { reader, doc, params, append } = event;
-  const text = params?.annotation?.text || params?.text || '';
-  if (!reader || !doc || !append || reader.type !== 'pdf' || !text.trim()) return;
+  const selection = ZOTERO_ASK_CORE.selectionFromPopup(params, ZoteroAsk_currentPage(reader));
+  if (!reader || !doc || !append || reader.type !== 'pdf' || !selection) return;
   const button = doc.createElement('button');
   button.type = 'button';
   button.className = 'zotero-ask-selection-action';
   button.textContent = 'Ask about selection';
-  button.addEventListener('click', () => ZoteroAsk_togglePanel(reader, doc, {
-    text: text.trim(), page: ZoteroAsk_currentPage(reader)
-  }));
+  button.addEventListener('click', () => ZoteroAsk_askAboutSelection(reader, doc, selection));
   append(button);
 }
 
@@ -160,13 +158,32 @@ function ZoteroAsk_currentPage(reader) {
   } catch (_) { return null; }
 }
 
-function ZoteroAsk_togglePanel(reader, doc, selection = null) {
+// Attach a selected passage: open Ask if needed (never close it) and show the passage above the input.
+function ZoteroAsk_askAboutSelection(reader, doc, selection) {
+  let state = ZOTERO_ASK_DOCS.get(doc);
+  if (!state || !state.panel.isConnected || state.panel.hidden) {
+    ZoteroAsk_togglePanel(reader, doc);
+    state = ZOTERO_ASK_DOCS.get(doc);
+  }
+  state.selection = selection;
+  ZoteroAsk_renderSelection(state);
+  state.input.focus();
+}
+
+function ZoteroAsk_renderSelection(state) {
+  const node = state.selectionNode;
+  node.hidden = !state.selection;
+  if (!state.selection) return;
+  node.querySelector('.za-selection-label').textContent = state.selection.page ? `Selected passage · page ${state.selection.page}` : 'Selected passage';
+  node.querySelector('.za-selection-text').textContent = state.selection.text;
+}
+
+function ZoteroAsk_togglePanel(reader, doc) {
   let state = ZOTERO_ASK_DOCS.get(doc);
   if (!state || !state.panel.isConnected) {
     state = ZoteroAsk_createPanel(reader, doc);
     ZOTERO_ASK_DOCS.set(doc, state);
   }
-  if (selection) state.selection = selection;
   if (state.panel.hidden) {
     ZoteroAsk_ensureStyle(doc);
     state.panel.hidden = false;
@@ -264,7 +281,11 @@ function ZoteroAsk_ensureStyle(doc) {
     #zotero-ask-panel .za-save-note { padding:5px 12px 0; border-top:1px solid var(--za-line); color:var(--za-text-3); font-size:11px; }
     #zotero-ask-panel .za-composer { padding:6px 12px 10px; background:var(--za-bg); }
     #zotero-ask-panel .za-composer-intro { margin:0 0 6px; color:var(--za-text-2); font-size:12px; line-height:1.4; }
-    #zotero-ask-panel .za-selection { margin-bottom:6px; padding:4px 8px 4px 9px; max-height:4.6em; overflow:auto; border-left:3px solid var(--za-quote); border-radius:0 var(--za-radius) var(--za-radius) 0; background:var(--za-quote-tint); color:var(--za-text); font:italic 12px/1.4 var(--za-serif); }
+    #zotero-ask-panel .za-selection { margin-bottom:6px; padding:3px 4px 5px 9px; border-left:3px solid var(--za-quote); border-radius:0 var(--za-radius) var(--za-radius) 0; background:var(--za-quote-tint); }
+    #zotero-ask-panel .za-selection-head { display:flex; align-items:center; justify-content:space-between; gap:6px; color:var(--za-text-2); font-size:11px; font-weight:600; }
+    #zotero-ask-panel .za-selection-clear { width:20px; height:20px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--za-text-2); font-size:15px; line-height:1; text-align:center; }
+    #zotero-ask-panel .za-selection-clear:hover { background:var(--za-hover); color:var(--za-text); }
+    #zotero-ask-panel .za-selection-text { max-height:4.6em; overflow:auto; color:var(--za-text); font:italic 12px/1.4 var(--za-serif); }
     #zotero-ask-panel textarea { display:block; width:100%; min-height:60px; max-height:180px; padding:7px 9px; resize:vertical; border:1px solid var(--za-line-strong); border-radius:var(--za-radius); background:var(--za-surface); line-height:1.45; }
     #zotero-ask-panel textarea::placeholder { color:var(--za-text-3); opacity:1; }
     #zotero-ask-panel textarea:focus-visible { border-color:var(--za-accent); outline:2px solid transparent; box-shadow:0 0 0 2px color-mix(in srgb,var(--za-accent) 30%,transparent); }
@@ -320,7 +341,7 @@ function ZoteroAsk_createPanel(reader, doc) {
     <div class="za-account-prompt" aria-live="polite" hidden><span class="za-account-prompt-text"></span><button type="button" class="za-button za-prompt-sign-in">Sign in</button></div>
     <main class="za-messages" role="log" aria-live="polite"></main>
     <div class="za-save-note">Chats are saved locally with this PDF attachment.</div>
-    <form class="za-composer"><p class="za-composer-intro" id="za-composer-intro">Ask about this paper. Highlight a passage to focus your question.</p><div class="za-selection" hidden></div><textarea aria-label="Ask a question" aria-describedby="za-composer-intro za-key-hint" placeholder="Ask about this paper…"></textarea><div class="za-submit-row"><span class="za-key-hint" id="za-key-hint">Enter to send · Shift+Enter for a new line</span><button class="za-send" type="submit">Ask</button></div><p class="za-hint">Paper text, selected page images, and your response instructions go to your Codex model.</p></form>
+    <form class="za-composer"><p class="za-composer-intro" id="za-composer-intro">Ask about this paper. Highlight a passage to focus your question.</p><div class="za-selection" hidden><div class="za-selection-head"><span class="za-selection-label"></span><button type="button" class="za-selection-clear" aria-label="Remove selected passage" title="Remove selected passage">×</button></div><div class="za-selection-text"></div></div><textarea aria-label="Ask a question" aria-describedby="za-composer-intro za-key-hint" placeholder="Ask about this paper…"></textarea><div class="za-submit-row"><span class="za-key-hint" id="za-key-hint">Enter to send · Shift+Enter for a new line</span><button class="za-send" type="submit">Ask</button></div><p class="za-hint">Paper text, relevant page images, any selected passage, and your response instructions go to your Codex model.</p></form>
   `;
   doc.body.appendChild(panel);
 
@@ -397,6 +418,11 @@ function ZoteroAsk_createPanel(reader, doc) {
       state.status.textContent = error?.message || String(error);
       state.status.classList.add('za-error');
     }
+  });
+  panel.querySelector('.za-selection-clear').addEventListener('click', () => {
+    state.selection = null;
+    ZoteroAsk_renderSelection(state);
+    state.input.focus();
   });
   state.instructions.value = ZoteroAsk_instructions();
   state.instructions.addEventListener('input', () => ZoteroAsk_setPref('instructions', ZOTERO_ASK_CORE.normalizeInstructions(state.instructions.value)));

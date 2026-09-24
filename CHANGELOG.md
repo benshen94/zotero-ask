@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 — 2026-09-24
+
+- **Ask about selection** now always opens or focuses Ask instead of closing an open panel, and shows the attached passage above the input with its page number and a × to remove it. Previously the passage was attached invisibly and stayed attached until the next question.
+- The selected passage is labelled with the page it came from, not the page currently in view.
+- The sign-out confirmation no longer names other apps.
+
 ## 0.2.1 — 2026-09-24
 
 - Account and settings panel (gear button) shows whether Codex is signed in, loading, signed out, or unavailable, with **Sign in** (opens the ChatGPT sign-in page in your browser), **Cancel**, and **Sign out of Codex on this Mac…**. Sign-out asks for confirmation because it signs out the Codex CLI shared with Reader and other Codex apps; it is unavailable while a question is running.

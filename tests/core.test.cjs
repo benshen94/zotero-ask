@@ -67,3 +67,12 @@ test('new Codex threads receive full paper context, metadata, and prior chat', (
   assert.match(prompt, /Earlier answer/);
   assert.match(prompt, /Current question:/);
 });
+
+test('selection popups yield the passage and the page it came from', () => {
+  const annotation = { text: '  Grip strength declined earlier.  ', position: { pageIndex: 4, rects: [[1, 2, 3, 4]] } };
+  assert.deepEqual(core.selectionFromPopup({ annotation }, 9), { text: 'Grip strength declined earlier.', page: 5 });
+  assert.deepEqual(core.selectionFromPopup({ annotation: { text: 'No position' } }, 9), { text: 'No position', page: 9 });
+  assert.deepEqual(core.selectionFromPopup({ text: 'Legacy text' }, null), { text: 'Legacy text', page: null });
+  assert.equal(core.selectionFromPopup({ annotation: { text: '   ' } }, 3), null);
+  assert.equal(core.selectionFromPopup(undefined, 3), null);
+});

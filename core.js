@@ -245,11 +245,22 @@ var ZoteroAskCore = (() => {
     return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
   }
 
+  // The passage from Zotero's text-selection popup, with its 1-based page when the reader reports it.
+  function selectionFromPopup(params, fallbackPage = null) {
+    const annotation = params?.annotation;
+    const text = String(annotation?.text || params?.text || '').trim();
+    if (!text) return null;
+    const index = annotation?.position?.pageIndex;
+    const page = Number.isInteger(index) && index >= 0 ? index + 1
+      : Number.isInteger(fallbackPage) && fallbackPage > 0 ? fallbackPage : null;
+    return { text, page };
+  }
+
   function isAuthError(message) {
     return /access token could not be refreshed|please sign in again|authentication required|not logged in|unauthorized|\b401\b/i.test(String(message || ''));
   }
 
-  const SIGN_OUT_NOTE = 'This signs out the Codex CLI on this Mac. Reader and Zotero Ask share this sign-in. Saved conversations stay.';
+  const SIGN_OUT_NOTE = 'This signs out the Codex CLI on this Mac, including any other app that uses it. Saved conversations stay.';
 
   function describeAccount(result) {
     const account = result?.account;
@@ -359,7 +370,7 @@ var ZoteroAskCore = (() => {
     tokens, isBroadQuestion, chooseVisualPages, normalizeModels, normalizeChatState, buildPrompt,
     KATEX_OPTIONS, escapeHTML, createMathRenderer, renderMarkdown, composerKeyAction,
     DEFAULT_INSTRUCTIONS, INSTRUCTIONS_LIMIT, normalizeInstructions, isAuthError, SIGN_OUT_NOTE, describeAccount, createAccountFlow,
-    redactDiagnostics, withDeadline
+    redactDiagnostics, withDeadline, selectionFromPopup
   };
 })();
 
