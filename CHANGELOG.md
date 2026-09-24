@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.3 — 2026-09-24
+
+- Typing in Ask no longer triggers Zotero reader shortcuts. Zotero's reader did not treat Ask's text boxes as text fields, so r or l started Read Aloud, other letters switched tools or highlight colors and were swallowed, Backspace could delete a selected annotation, and Tab jumped out of the panel. Ask now runs in its own document inside the reader, so typing, ⌘A, ⌘C, ⌘V, Backspace, and Tab behave normally, and answer text can be selected and copied.
+- Long answers are no longer cut off after 4 minutes. A question now stops only if Codex sends nothing for 5 minutes (30 minutes at most), any text that already arrived is kept, and Codex's own retries are shown.
+- The status line shows elapsed time (“Thinking… 12 s”, then “Writing… 40 s”) so a long answer visibly makes progress.
+- A question running in one chat no longer blocks the others; Stop applies to the chat on screen.
+- Faster answers: the paper text is read when Ask opens rather than when you ask, and follow-up questions only attach page images the chat has not already sent.
+- Selecting text in the PDF while Ask is open attaches it to your next question automatically.
+- Dragging the panel edge to resize now follows the pointer over the PDF and the panel, always ends on release, keeps both Ask and the PDF usable, and double-click resets the width.
+
 ## 0.2.2 — 2026-09-24
 
 - **Ask about selection** now always opens or focuses Ask instead of closing an open panel, and shows the attached passage above the input with its page number and a × to remove it. Previously the passage was attached invisibly and stayed attached until the next question.

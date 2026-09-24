@@ -146,15 +146,81 @@ test('account status reaches every live panel, skips dead ones, and survives a f
   });
   const zotero = load(async () => process);
   const stub = () => { const elements = {}; return { isConnected: true, querySelector: selector => (elements[selector] ||= { dataset: {} }) }; };
-  const live = { panel: stub(), busy: false, authExpired: false };
-  const failing = { panel: { isConnected: true, querySelector() { throw new Error('panel is gone'); } }, busy: false };
+  // The outer panel lives in the reader page; its content (root) lives in the panel's own document.
+  const live = { panel: { isConnected: true }, root: stub(), running: new Map(), authExpired: false };
+  const failing = { panel: { isConnected: true }, root: { querySelector() { throw new Error('panel is gone'); } }, running: new Map() };
   const dead = { get panel() { throw new TypeError("can't access dead object"); } };
   zotero.context.testPanels = [live, failing, dead];
   zotero.run('for (const state of testPanels) ZOTERO_ASK_PANELS.add(state);');
   const status = await zotero.run('ZoteroAsk_account().refresh()');
   assert.equal(status.state, 'signed-in');
-  assert.equal(live.panel.querySelector('.za-account-status').textContent, 'Signed in as reader@example.org · Plus');
-  assert.equal(live.panel.querySelector('.za-sign-out').hidden, false);
+  assert.equal(live.root.querySelector('.za-account-status').textContent, 'Signed in as reader@example.org · Plus');
+  assert.equal(live.root.querySelector('.za-sign-out').hidden, false);
   assert.equal(zotero.run('ZOTERO_ASK_PANELS.size'), 2, 'the dead panel is dropped');
   assert.ok(zotero.debug.some(line => line.startsWith('Zotero Ask could not update a panel: panel is gone')));
+});
+
+// A fake app-server that answers requests and lets the test emit turn notifications.
+async function startedServer() {
+  const requests = [];
+  const process = fakeProcess(message => {
+    requests.push(message);
+    if (message.method === 'initialize') return {};
+    if (message.method === 'turn/start') return { turn: { id: 'turn-1' } };
+    if (message.method === 'turn/interrupt') return {};
+    return undefined;
+  });
+  const zotero = load(async () => process);
+  const server = zotero.run('ZoteroAsk_getServer()');
+  await flush();
+  zotero.context.server = await server;
+  const emit = (method, params) => process.stdout.push(JSON.stringify({ method, params: { threadId: 'thread-1', ...params } }) + '\n');
+  return { zotero, emit, requests };
+}
+
+test('a long answer keeps streaming past the old 4-minute cap', async () => {
+  const { zotero, emit } = await startedServer();
+  const answer = zotero.run("server.ask('thread-1', [], { id: 'm' }, 'high', false, () => {})");
+  await flush();
+  for (let minute = 1; minute <= 12; minute++) {
+    await zotero.clock.advance(60000);
+    emit('item/agentMessage/delta', { delta: `part ${minute}. ` });
+    await flush();
+  }
+  emit('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+  await flush();
+  const text = await answer;
+  assert.match(text, /^part 1\. .*part 12\. $/);
+});
+
+test('a silent turn stops after the idle limit and interrupts the right turn', async () => {
+  const { zotero, emit, requests } = await startedServer();
+  const answer = zotero.run("server.ask('thread-1', [], { id: 'm' }, 'high', false, () => {})").catch(error => error);
+  await flush();
+  emit('turn/started', { turn: { id: 'turn-1' } });
+  await flush();
+  await zotero.clock.advance(4 * 60000);
+  emit('item/reasoning/summaryTextDelta', { delta: 'still thinking' });
+  await flush();
+  await zotero.clock.advance(4 * 60000);
+  assert.equal(requests.filter(message => message.method === 'turn/interrupt').length, 0, 'reasoning events count as progress');
+  await zotero.clock.advance(60000 + 1);
+  const error = await answer;
+  assert.equal(error.message, 'Codex sent nothing for 5 minutes, so the answer was stopped. Try again.');
+  await flush();
+  assert.deepEqual(requests.find(message => message.method === 'turn/interrupt').params, { threadId: 'thread-1', turnId: 'turn-1' });
+});
+
+test('Codex retries are reported and a final error explains the failed turn', async () => {
+  const { zotero, emit } = await startedServer();
+  zotero.context.notes = [];
+  const answer = zotero.run("server.ask('thread-1', [], { id: 'm' }, 'high', false, () => {}, note => notes.push(note))").catch(error => error);
+  await flush();
+  emit('error', { willRetry: true, turnId: 'turn-1', error: { message: `stream disconnected for ${HOME} reader@example.org` } });
+  await flush();
+  assert.deepEqual([...zotero.context.notes], ['Codex is retrying after stream disconnected for ~ [email]']);
+  emit('error', { willRetry: false, turnId: 'turn-1', error: { message: 'usage limit reached' } });
+  emit('turn/completed', { turn: { id: 'turn-1', status: 'failed' } });
+  await flush();
+  assert.equal((await answer).message, 'usage limit reached');
 });
