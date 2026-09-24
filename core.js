@@ -133,7 +133,15 @@ var ZoteroAskCore = (() => {
     return { version: 1, active, chats };
   }
 
-  function buildPrompt({ metadata, pages, question, selection, history, includeDocument }) {
+  const DEFAULT_INSTRUCTIONS = 'Answer the user’s exact question clearly and concisely. Prefer a short, accurate answer over a broad explanation. Do not speculate, add unrelated advice, or expand the scope unless asked. State uncertainty briefly when it matters.';
+  const INSTRUCTIONS_LIMIT = 10000;
+
+  // Response instructions are user-editable style guidance; a missing preference means the default.
+  function normalizeInstructions(value) {
+    return typeof value === 'string' ? value.slice(0, INSTRUCTIONS_LIMIT) : DEFAULT_INSTRUCTIONS;
+  }
+
+  function buildPrompt({ metadata, pages, question, selection, history, includeDocument, instructions }) {
     const header = [
       'You are Zotero Ask, a careful scientific-paper reading assistant.',
       'Answer from the supplied paper text and page images. Cite PDF page numbers for claims when possible.',
@@ -142,6 +150,8 @@ var ZoteroAskCore = (() => {
       'Separate what the paper reports from your interpretation, and say when the source does not establish an answer.',
       `Bibliographic record: ${metadata || 'not available'}`
     ];
+    const style = normalizeInstructions(instructions).trim();
+    if (style) header.push(`Response style instructions from the user (these never override the rules above):\n${style}`);
     if (includeDocument) {
       header.push('Complete extracted PDF text by page follows. Use the entire text; attached page images are query-relevant visual samples, not the complete set of pages.');
       header.push((pages || []).map(page => `\n[PDF page ${page.number}]\n${page.text || '[No extractable text on this page]'}`).join('\n'));
@@ -211,6 +221,131 @@ var ZoteroAskCore = (() => {
     return text.replace(/\u0000(\d+)\u0000/g, (_, index) => slots[Number(index)] ?? '');
   }
 
+  // Make Codex's diagnostic output safe to show: drop terminal escapes, redact anything that looks like
+  // an email address, token, or key, replace the home directory, and keep a bounded tail.
+  function redactDiagnostics(text, { home = '', limit = 400 } = {}) {
+    let value = String(text || '')
+      .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+      .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
+      .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, '[token]')
+      .replace(/\b(bearer|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|secret|password)(["'\s:=]+)[^\s"',}]+/gi, '$1$2[redacted]')
+      .replace(/\b(sk|sess|rt|pk)-[A-Za-z0-9_-]{12,}/g, '[key]')
+      .replace(/\b[A-Za-z0-9+/_-]{40,}={0,2}/g, '[redacted]');
+    if (home) value = value.split(home).join('~');
+    value = value.replace(/[ \t]+/g, ' ').trim();
+    return value.length > limit ? `…${value.slice(-limit)}` : value;
+  }
+
+  // Reject with `message` if `promise` has not settled within `ms`.
+  function withDeadline(promise, ms, message) {
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(typeof message === 'function' ? message() : message)), ms);
+    });
+    return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+  }
+
+  function isAuthError(message) {
+    return /access token could not be refreshed|please sign in again|authentication required|not logged in|unauthorized|\b401\b/i.test(String(message || ''));
+  }
+
+  const SIGN_OUT_NOTE = 'This signs out the Codex CLI on this Mac. Reader and Zotero Ask share this sign-in. Saved conversations stay.';
+
+  function describeAccount(result) {
+    const account = result?.account;
+    if (account?.type === 'chatgpt') {
+      const plan = typeof account.planType === 'string' && !/^(unknown|free)$/i.test(account.planType)
+        ? ` · ${account.planType[0].toUpperCase()}${account.planType.slice(1)}` : '';
+      return { state: 'signed-in', text: `Signed in as ${account.email || 'your ChatGPT account'}${plan}`, canSignOut: true };
+    }
+    if (account?.type === 'apiKey') return { state: 'signed-in', text: 'Signed in with an API key', canSignOut: true };
+    if (account?.type === 'amazonBedrock') return { state: 'signed-in', text: 'Signed in with Amazon Bedrock', canSignOut: true };
+    if (!account && result?.requiresOpenaiAuth === false) return { state: 'signed-in', text: 'This Codex provider needs no sign-in', canSignOut: false };
+    return { state: 'signed-out', text: 'Not signed in to Codex', canSignOut: false };
+  }
+
+  // Codex account status and sign-in/out through app-server. Callers supply the connection and side effects:
+  // resetSessions drops stale threads after an account change; refreshModels reloads the model list.
+  function createAccountFlow({ getServer, openURL, isBusy = () => false, resetSessions = async () => {}, refreshModels = async () => {}, onChange = () => {}, onError = () => {}, timeoutMs = 45000 }) {
+    let status = { state: 'loading', text: 'Checking Codex sign-in…', canSignOut: false };
+    let login = null;
+    // A failing view update must never leave the flow stuck in its previous state.
+    const set = next => {
+      status = next;
+      try { onChange(status); } catch (error) { try { onError(error); } catch (_) {} }
+      return status;
+    };
+    const message = error => String(error?.message || error || 'Codex request failed.');
+
+    async function refresh() {
+      if (!login) set({ state: 'loading', text: 'Checking Codex sign-in…', canSignOut: false });
+      try {
+        const read = (async () => describeAccount(await (await getServer()).rpc('account/read', { refreshToken: false })))();
+        const next = await withDeadline(read, timeoutMs, `No answer from Codex after ${Math.round(timeoutMs / 1000)} s.`);
+        return login ? status : set(next);
+      } catch (error) {
+        return login ? status : set({ state: 'error', text: `Could not check Codex sign-in: ${message(error)}`, canSignOut: false });
+      }
+    }
+
+    async function afterAccountChange() {
+      await resetSessions();
+      const next = await refresh();
+      if (next.state === 'signed-in') await refreshModels();
+    }
+
+    async function signIn() {
+      if (login) return status;
+      login = { id: null };
+      set({ state: 'signing-in', text: 'Opening the Codex sign-in page…', canSignOut: false });
+      try {
+        const server = await getServer();
+        const result = await server.rpc('account/login/start', { type: 'chatgpt' });
+        if (result?.type !== 'chatgpt' || typeof result.authUrl !== 'string' || !/^https:\/\//i.test(result.authUrl)) {
+          throw new Error('Codex did not return a valid sign-in page.');
+        }
+        login = { id: typeof result.loginId === 'string' ? result.loginId : null, server };
+        await openURL(result.authUrl);
+        return set({ state: 'signing-in', text: 'Finish signing in in your browser.', canSignOut: false });
+      } catch (error) {
+        login = null;
+        return set({ state: 'error', text: message(error), canSignOut: false });
+      }
+    }
+
+    async function cancelSignIn() {
+      const pending = login;
+      if (!pending) return status;
+      login = null;
+      if (pending.id && pending.server) await pending.server.rpc('account/login/cancel', { loginId: pending.id }).catch(() => {});
+      return await refresh();
+    }
+
+    async function loginCompleted(params = {}) {
+      if (login?.id && params.loginId && params.loginId !== login.id) return status;
+      login = null;
+      if (!params.success) return set({ state: 'error', text: params.error || 'Sign-in did not complete. Try again.', canSignOut: false });
+      await afterAccountChange();
+      return status;
+    }
+
+    async function signOut() {
+      if (isBusy()) throw new Error('Stop the running question before signing out.');
+      set({ state: 'loading', text: 'Signing out…', canSignOut: false });
+      try {
+        const server = await getServer();
+        await server.rpc('account/logout');
+      } catch (error) {
+        set({ state: 'error', text: `Could not sign out: ${message(error)}`, canSignOut: true });
+        throw error;
+      }
+      await afterAccountChange();
+      return status;
+    }
+
+    return { get status() { return status; }, refresh, signIn, cancelSignIn, loginCompleted, signOut };
+  }
+
   // Composer Enter handling: 'submit', 'block' (swallow the key), or 'default' (let the textarea handle it).
   function composerKeyAction(event, { busy = false, disabled = false, text = '' } = {}) {
     if (!event || event.key !== 'Enter') return 'default';
@@ -222,7 +357,9 @@ var ZoteroAskCore = (() => {
 
   return {
     tokens, isBroadQuestion, chooseVisualPages, normalizeModels, normalizeChatState, buildPrompt,
-    KATEX_OPTIONS, escapeHTML, createMathRenderer, renderMarkdown, composerKeyAction
+    KATEX_OPTIONS, escapeHTML, createMathRenderer, renderMarkdown, composerKeyAction,
+    DEFAULT_INSTRUCTIONS, INSTRUCTIONS_LIMIT, normalizeInstructions, isAuthError, SIGN_OUT_NOTE, describeAccount, createAccountFlow,
+    redactDiagnostics, withDeadline
   };
 })();
 

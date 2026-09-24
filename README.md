@@ -2,9 +2,13 @@
 
 Ask questions about a paper without leaving Zotero’s PDF reader. Zotero Ask adds a compact conversation sidebar, uses the PDF’s extracted text, and selects up to eight page images that are relevant to your question.
 
-![Illustrative preview of the Zotero Ask sidebar in light mode, rendered from the plugin's CSS with generic sample paper and chat content; not a screenshot of a running Zotero window](screenshots/reader-ask-light.png)
+![Illustrative preview of the Zotero Ask 0.2.1 sidebar beside a placeholder PDF: conversation tabs, a question, an answer with typeset LaTeX, and the composer. Rendered from the plugin's own code with synthetic content; not a screenshot of a running Zotero window](screenshots/zotero-ask-sidebar.png)
 
-*Illustrative interface preview rendered from the current CSS with generic sample content, not captured from Zotero.*
+*Illustrative preview: the Ask sidebar rendered from the 0.2.1 plugin code with a synthetic paper, conversation, and model. Not captured from Zotero.*
+
+![Illustrative preview of the Zotero Ask 0.2.1 Account and settings panel: a placeholder signed-in Codex account, the Sign out of Codex on this Mac button, and editable Response instructions with Reset. Rendered with synthetic content; not a screenshot of a running Zotero window](screenshots/zotero-ask-account-settings.png)
+
+*Illustrative preview: Account and settings (gear button) with a placeholder account (reader@example.org) and the default Response instructions. Not captured from Zotero.*
 
 ## What it does
 
@@ -16,18 +20,21 @@ Ask questions about a paper without leaving Zotero’s PDF reader. Zotero Ask ad
 - Refreshes the model list from Codex whenever the sidebar opens, so newly available models appear automatically.
 - Offers model reasoning and Fast settings when the selected model supports them.
 - Adds no API key, secret, or separate account. It uses your signed-in Codex CLI.
+- The gear button opens **Account and settings**: Codex sign-in status, **Sign in** and **Sign out of Codex on this Mac…**, and editable **Response instructions** with Reset.
 
 ## Install
 
 ### 1. Set up Codex
 
-Install the [Codex CLI](https://github.com/openai/codex#quickstart), run `codex`, and sign in with your ChatGPT account. Confirm that `codex login status` reports a signed-in account.
+Install the [Codex CLI](https://github.com/openai/codex#quickstart). You can sign in from Ask itself: open the gear menu and choose **Sign in**, which opens the ChatGPT sign-in page in your browser. Signing in with `codex` in Terminal works too.
+
+**Sign out of Codex on this Mac…** signs out the Codex CLI itself, so Reader and other Codex apps on this Mac are signed out too. Ask confirms before signing out. Saved conversations are not deleted.
 
 Zotero Ask talks to the Codex app-server started by the CLI on your computer. It does not contain an API key. You do not need to paste a key into Zotero Ask.
 
 ### 2. Install the Zotero plugin
 
-1. Download `zotero-ask-0.1.9.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
+1. Download `zotero-ask-0.2.1.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
 2. In Zotero, choose **Tools → Plugins**.
 3. Open the gear menu and choose **Install Plugin From File…**.
 4. Select the downloaded XPI and restart Zotero if prompted.
@@ -35,7 +42,7 @@ Zotero Ask talks to the Codex app-server started by the CLI on your computer. It
 
 ## Privacy
 
-When you submit a question, Zotero Ask sends the question, PDF metadata, the PDF’s extractable text, and up to eight relevant rendered page images to the Codex CLI running on your computer. Codex then uses the account you signed into. Only ask about documents you are allowed to send to that service.
+When you submit a question, Zotero Ask sends the question, your response instructions, PDF metadata, the PDF’s extractable text, and up to eight relevant rendered page images to the Codex CLI running on your computer. Codex then uses the account you signed into. Only ask about documents you are allowed to send to that service.
 
 The plugin does not send data to a Zotero Ask server. It does not include or ask for an API key. Conversations are stored as files in your local Zotero profile and do not modify the PDF or Zotero library records. The Codex process is started with tools and integrations disabled for this document chat.
 
@@ -51,7 +58,7 @@ The installer currently accepts Zotero 9.x. Zotero 10 has not been verified, so 
 
 ## Troubleshooting
 
-- **No models appear:** run `codex login status`, complete sign-in in Codex if needed, then close and reopen Ask.
+- **No models appear:** open the gear menu, check the Codex account status, and choose **Sign in** if needed. Models reload automatically after signing in.
 - **The sidebar does not open:** make sure the open tab is a PDF in Zotero’s reader and Zotero Ask is enabled under **Tools → Plugins**.
 - **The plugin is marked incompatible:** check that Zotero is version 9.x and install the latest XPI from Releases.
 - **A Codex update breaks Ask:** check the project’s [issues](https://github.com/benshen94/zotero-ask/issues) and install the latest compatible release.

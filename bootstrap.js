@@ -1,15 +1,21 @@
 const ZOTERO_ASK_ID = 'zotero-ask@benshenhar.com';
-const ZOTERO_ASK_VERSION = '0.1.9';
+const ZOTERO_ASK_VERSION = '0.2.1';
 const ZOTERO_ASK_PREF = 'extensions.zoteroAsk.';
 const ZOTERO_ASK_DEFAULT_WIDTH = 390;
 let ZOTERO_ASK_ROOT = '';
 let ZOTERO_ASK_CORE = null;
+// Everything bootstrap.js uses from core.js; startup checks the loaded core provides all of it.
+const ZOTERO_ASK_CORE_API = ['DEFAULT_INSTRUCTIONS', 'SIGN_OUT_NOTE', 'buildPrompt', 'chooseVisualPages', 'composerKeyAction',
+  'createAccountFlow', 'createMathRenderer', 'isAuthError', 'normalizeChatState', 'normalizeInstructions', 'normalizeModels',
+  'redactDiagnostics', 'renderMarkdown', 'withDeadline'];
 let ZOTERO_ASK_SERVER = null;
 let ZOTERO_ASK_DOCS = new WeakMap();
 let ZOTERO_ASK_RENDERED_DOCS = new Set();
+let ZOTERO_ASK_PANELS = new Set();
 let ZOTERO_ASK_SHUTTING_DOWN = false;
 let ZOTERO_ASK_RENDER_MATH;
 let ZOTERO_ASK_KATEX_CSS;
+let ZOTERO_ASK_ACCOUNT = null;
 
 function install() {}
 
@@ -19,11 +25,23 @@ function startup({ rootURI }) {
   ZOTERO_ASK_ROOT = rootURI;
   ZOTERO_ASK_SHUTTING_DOWN = false;
   const scope = {};
-  Services.scriptloader.loadSubScript(`${rootURI}core.js`, scope);
+  ZoteroAsk_loadScript(`${rootURI}core.js`, scope);
+  const missing = ZOTERO_ASK_CORE_API.filter(name => scope.ZoteroAskCore?.[name] === undefined);
+  if (missing.length) {
+    const message = `Zotero Ask ${ZOTERO_ASK_VERSION}: core.js is missing ${missing.join(', ')}. Reinstall Zotero Ask and restart Zotero.`;
+    Zotero.debug(message);
+    throw new Error(message);
+  }
   ZOTERO_ASK_CORE = scope.ZoteroAskCore;
   Zotero.Reader.registerEventListener('renderToolbar', ZoteroAsk_renderToolbar, ZOTERO_ASK_ID);
   Zotero.Reader.registerEventListener('renderTextSelectionPopup', ZoteroAsk_renderSelectionAction, ZOTERO_ASK_ID);
   Zotero.debug('Zotero Ask loaded');
+}
+
+// Load a script from the XPI without the subscript cache: reinstalling the same version could otherwise
+// run a stale cached core.js next to a new bootstrap.js.
+function ZoteroAsk_loadScript(url, target) {
+  Services.scriptloader.loadSubScriptWithOptions(url, { target, ignoreCache: true });
 }
 
 function shutdown() {
@@ -36,11 +54,14 @@ function shutdown() {
     try { ZoteroAsk_removeNodes(doc, '#zotero-ask-toolbar-button, #zotero-ask-panel, #zotero-ask-style'); } catch (_) {}
   }
   ZOTERO_ASK_RENDERED_DOCS.clear();
+  for (const state of ZOTERO_ASK_PANELS) { try { state.panel.remove(); } catch (_) {} }
+  ZOTERO_ASK_PANELS.clear();
   if (ZOTERO_ASK_SERVER) ZOTERO_ASK_SERVER.close();
   ZOTERO_ASK_SERVER = null;
   ZOTERO_ASK_DOCS = new WeakMap();
   ZOTERO_ASK_RENDER_MATH = undefined;
   ZOTERO_ASK_KATEX_CSS = undefined;
+  ZOTERO_ASK_ACCOUNT = null;
 }
 
 function ZoteroAsk_pref(name, fallback) {
@@ -75,7 +96,7 @@ function ZoteroAsk_renderMath(tex, displayMode) {
     try {
       const scope = { module: { exports: {} } };
       scope.exports = scope.module.exports;
-      Services.scriptloader.loadSubScript(`${ZOTERO_ASK_ROOT}vendor/katex/katex.min.js`, scope);
+      ZoteroAsk_loadScript(`${ZOTERO_ASK_ROOT}vendor/katex/katex.min.js`, scope);
       ZOTERO_ASK_RENDER_MATH = ZOTERO_ASK_CORE.createMathRenderer(scope.module.exports);
     } catch (error) { Zotero.debug(`Zotero Ask could not load KaTeX: ${error}`); }
   }
@@ -87,7 +108,7 @@ function ZoteroAsk_katexCSS() {
     ZOTERO_ASK_KATEX_CSS = '';
     try {
       const scope = {};
-      Services.scriptloader.loadSubScript(`${ZOTERO_ASK_ROOT}vendor/katex/katex-style.js`, scope);
+      ZoteroAsk_loadScript(`${ZOTERO_ASK_ROOT}vendor/katex/katex-style.js`, scope);
       ZOTERO_ASK_KATEX_CSS = String(scope.ZoteroAskKatexCSS || '');
     } catch (error) { Zotero.debug(`Zotero Ask could not load KaTeX styles: ${error}`); }
   }
@@ -150,6 +171,8 @@ function ZoteroAsk_togglePanel(reader, doc, selection = null) {
     ZoteroAsk_ensureStyle(doc);
     state.panel.hidden = false;
     state.button?.setAttribute('aria-pressed', 'true');
+    if (state.doc.activeElement !== state.instructions) state.instructions.value = ZoteroAsk_instructions();
+    ZoteroAsk_renderAccount(state);
     state.input.focus();
     void ZoteroAsk_activateDocument(state, reader);
   } else {
@@ -169,6 +192,7 @@ function ZoteroAsk_ensureStyle(doc) {
     #zotero-ask-panel { --za-bg:light-dark(#f4f4f2,#232325); --za-surface:light-dark(#fff,#1b1b1d); --za-text:light-dark(#1d1d1f,#ececee); --za-text-2:light-dark(#4f4f55,#b4b4bb); --za-text-3:light-dark(#66666d,#9a9aa1); --za-line:light-dark(#0000001a,#ffffff1c); --za-line-strong:light-dark(#00000033,#ffffff33); --za-hover:light-dark(#0000000f,#ffffff14); --za-accent:light-dark(#2563c9,#8ab4ff); --za-accent-hover:light-dark(#1d52a8,#a6c6ff); --za-on-accent:light-dark(#fff,#0d1b33); --za-accent-tint:light-dark(#2563c90f,#8ab4ff14); --za-quote:#ffd400; --za-quote-tint:light-dark(#ffd4002e,#ffd4001f); --za-error:light-dark(#b42318,#ff8a80); --za-serif:"Iowan Old Style","Charter","Georgia",serif; --za-mono:ui-monospace,SFMono-Regular,Menlo,monospace; --za-radius:5px; --za-control-height:26px; position:fixed; z-index:2147483000; inset:0 0 0 auto; width:${Number(ZoteroAsk_pref('width', ZOTERO_ASK_DEFAULT_WIDTH))}px; max-width:85vw; display:flex; flex-direction:column; color:var(--za-text); background:var(--za-bg); border-left:1px solid var(--za-line-strong); box-shadow:-1px 0 4px #00000014; font:13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light dark; }
     #zotero-ask-panel[hidden] { display:none !important; }
     #zotero-ask-panel * { box-sizing:border-box; }
+    #zotero-ask-panel [hidden] { display:none !important; }
     #zotero-ask-panel .za-resize { position:absolute; inset:0 auto 0 -3px; width:6px; cursor:ew-resize; z-index:1; }
     #zotero-ask-panel .za-resize:hover { background:linear-gradient(to right,transparent 2px,var(--za-accent) 2px,var(--za-accent) 4px,transparent 4px); }
     #zotero-ask-panel button, #zotero-ask-panel select, #zotero-ask-panel textarea, #zotero-ask-panel input { color:inherit; font:inherit; }
@@ -197,6 +221,23 @@ function ZoteroAsk_ensureStyle(doc) {
     #zotero-ask-panel .za-tab:is(:hover,:focus-visible,[aria-selected="true"]) .za-tab-close { visibility:visible; }
     #zotero-ask-panel .za-tab-close:hover { color:var(--za-text); background:var(--za-hover); }
 
+    #zotero-ask-panel .za-button { display:inline-flex; align-items:center; height:var(--za-control-height); padding:0 10px; border:1px solid var(--za-line-strong); border-radius:var(--za-radius); background:var(--za-surface); color:var(--za-text); font-size:12px; white-space:nowrap; }
+    #zotero-ask-panel .za-button:hover:not(:disabled) { background:var(--za-hover); }
+    #zotero-ask-panel .za-button:disabled { color:var(--za-text-3); cursor:default; }
+    #zotero-ask-panel .za-button.za-danger { border-color:var(--za-error); color:var(--za-error); }
+    #zotero-ask-panel .za-settings { max-height:45%; overflow:auto; padding:8px 12px 10px; border-bottom:1px solid var(--za-line); background:var(--za-bg); }
+    #zotero-ask-panel .za-settings-group + .za-settings-group { margin-top:10px; padding-top:10px; border-top:1px solid var(--za-line); }
+    #zotero-ask-panel .za-settings-heading { display:block; margin:0 0 4px; color:var(--za-text-2); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; }
+    #zotero-ask-panel .za-account-status { margin:0 0 6px; overflow-wrap:anywhere; font-size:12px; }
+    #zotero-ask-panel .za-account-status[data-state="error"] { color:var(--za-error); }
+    #zotero-ask-panel .za-account-status[data-state="loading"], #zotero-ask-panel .za-account-status[data-state="signing-in"] { color:var(--za-text-2); }
+    #zotero-ask-panel .za-account-actions { display:flex; flex-wrap:wrap; gap:6px; }
+    #zotero-ask-panel .za-sign-out-confirm { margin-top:8px; padding:8px; border-left:3px solid var(--za-error); background:var(--za-hover); }
+    #zotero-ask-panel .za-sign-out-confirm p { margin:0 0 6px; color:var(--za-text-2); font-size:12px; line-height:1.4; }
+    #zotero-ask-panel .za-instructions { min-height:84px; font-size:12px; }
+    #zotero-ask-panel .za-instructions-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; }
+    #zotero-ask-panel .za-instructions-row small { color:var(--za-text-3); font-size:11px; }
+    #zotero-ask-panel .za-account-prompt { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 12px; border-bottom:1px solid var(--za-line); background:var(--za-accent-tint); font-size:12px; }
     #zotero-ask-panel .za-status { padding:4px 12px; border-bottom:1px solid var(--za-line); color:var(--za-text-2); font-size:11.5px; }
     #zotero-ask-panel .za-status:empty { display:none; }
     #zotero-ask-panel .za-status.za-error { color:var(--za-error); }
@@ -257,21 +298,36 @@ function ZoteroAsk_createPanel(reader, doc) {
   panel.innerHTML = `
     <div class="za-resize" title="Resize Ask panel"></div>
     <header>
-      <div class="za-title-row"><div class="za-title">Ask</div><button class="za-icon za-new" title="New chat" aria-label="New chat">＋</button><button class="za-icon za-close" title="Close Ask" aria-label="Close Ask">×</button></div>
+      <div class="za-title-row"><div class="za-title">Ask</div><button class="za-icon za-settings-toggle" title="Account and settings" aria-label="Account and settings" aria-expanded="false" aria-controls="za-settings">⚙︎</button><button class="za-icon za-new" title="New chat" aria-label="New chat">＋</button><button class="za-icon za-close" title="Close Ask" aria-label="Close Ask">×</button></div>
       <div class="za-paper">Open a PDF in Zotero to ask about it.</div>
       <div class="za-model-row"><select class="za-model" aria-label="Model"><option>Loading models…</option></select><select class="za-effort" aria-label="Reasoning intensity"></select><label class="za-fast"><input class="za-fast-toggle" type="checkbox"> Fast</label></div>
     </header>
+    <section class="za-settings" id="za-settings" aria-label="Account and settings" hidden>
+      <div class="za-settings-group" role="group" aria-labelledby="za-account-heading">
+        <h2 class="za-settings-heading" id="za-account-heading">Codex account</h2>
+        <p class="za-account-status" role="status" aria-live="polite"></p>
+        <div class="za-account-actions"><button type="button" class="za-button za-sign-in" hidden>Sign in</button><button type="button" class="za-button za-cancel-sign-in" hidden>Cancel</button><button type="button" class="za-button za-sign-out" hidden>Sign out of Codex on this Mac…</button></div>
+        <div class="za-sign-out-confirm" hidden><p id="za-sign-out-note"></p><div class="za-account-actions"><button type="button" class="za-button za-danger za-confirm-sign-out" aria-describedby="za-sign-out-note">Sign out</button><button type="button" class="za-button za-keep-signed-in">Cancel</button></div></div>
+      </div>
+      <div class="za-settings-group">
+        <label class="za-settings-heading" for="za-instructions">Response instructions</label>
+        <textarea class="za-instructions" id="za-instructions" maxlength="10000" aria-describedby="za-instructions-note"></textarea>
+        <div class="za-instructions-row"><small id="za-instructions-note">Saved automatically · sent with every question</small><button type="button" class="za-button za-reset-instructions">Reset</button></div>
+      </div>
+    </section>
     <nav class="za-chat-tabs" aria-label="Chat tabs"></nav>
     <div class="za-status" role="status" aria-live="polite"></div>
+    <div class="za-account-prompt" aria-live="polite" hidden><span class="za-account-prompt-text"></span><button type="button" class="za-button za-prompt-sign-in">Sign in</button></div>
     <main class="za-messages" role="log" aria-live="polite"></main>
     <div class="za-save-note">Chats are saved locally with this PDF attachment.</div>
-    <form class="za-composer"><p class="za-composer-intro" id="za-composer-intro">Ask about this paper. Highlight a passage to focus your question.</p><div class="za-selection" hidden></div><textarea aria-label="Ask a question" aria-describedby="za-composer-intro za-key-hint" placeholder="Ask about this paper…"></textarea><div class="za-submit-row"><span class="za-key-hint" id="za-key-hint">Enter to send · Shift+Enter for a new line</span><button class="za-send" type="submit">Ask</button></div><p class="za-hint">Paper text and selected page images go to your Codex model.</p></form>
+    <form class="za-composer"><p class="za-composer-intro" id="za-composer-intro">Ask about this paper. Highlight a passage to focus your question.</p><div class="za-selection" hidden></div><textarea aria-label="Ask a question" aria-describedby="za-composer-intro za-key-hint" placeholder="Ask about this paper…"></textarea><div class="za-submit-row"><span class="za-key-hint" id="za-key-hint">Enter to send · Shift+Enter for a new line</span><button class="za-send" type="submit">Ask</button></div><p class="za-hint">Paper text, selected page images, and your response instructions go to your Codex model.</p></form>
   `;
   doc.body.appendChild(panel);
 
   const state = {
     reader, doc, panel, button: doc.getElementById('zotero-ask-toolbar-button'),
-    input: panel.querySelector('textarea'), tabs: panel.querySelector('.za-chat-tabs'),
+    input: panel.querySelector('.za-composer textarea'), tabs: panel.querySelector('.za-chat-tabs'),
+    settings: panel.querySelector('.za-settings'), instructions: panel.querySelector('.za-instructions'), authExpired: false,
     log: panel.querySelector('.za-messages'), status: panel.querySelector('.za-status'),
     paper: panel.querySelector('.za-paper'), modelSelect: panel.querySelector('.za-model'),
     effortSelect: panel.querySelector('.za-effort'), fastToggle: panel.querySelector('.za-fast-toggle'),
@@ -279,6 +335,8 @@ function ZoteroAsk_createPanel(reader, doc) {
     selection: null, item: null, metadata: '', documentCache: null, chats: [], activeChatID: '',
     sessions: new Map(), models: [], busy: false, resizeDrag: null
   };
+  for (const other of ZOTERO_ASK_PANELS) if (other.doc === doc) ZOTERO_ASK_PANELS.delete(other);
+  ZOTERO_ASK_PANELS.add(state);
 
   const savedWidth = Number(ZoteroAsk_pref('width', ZOTERO_ASK_DEFAULT_WIDTH));
   panel.style.width = `${Math.max(320, Math.min(720, Number.isFinite(savedWidth) ? savedWidth : ZOTERO_ASK_DEFAULT_WIDTH))}px`;
@@ -309,6 +367,44 @@ function ZoteroAsk_createPanel(reader, doc) {
     doc.addEventListener('pointermove', move);
     doc.addEventListener('pointerup', up);
   });
+  const settingsToggle = panel.querySelector('.za-settings-toggle');
+  settingsToggle.addEventListener('click', () => {
+    state.settings.hidden = !state.settings.hidden;
+    settingsToggle.setAttribute('aria-expanded', String(!state.settings.hidden));
+    if (!state.settings.hidden && ZoteroAsk_account().status.state !== 'signing-in') ZoteroAsk_account().refresh().catch(error => ZoteroAsk_logError('account check failed', error));
+  });
+  for (const selector of ['.za-sign-in', '.za-prompt-sign-in']) {
+    panel.querySelector(selector).addEventListener('click', () => { ZoteroAsk_account().signIn().catch(error => ZoteroAsk_logError('sign-in failed', error)); });
+  }
+  panel.querySelector('.za-cancel-sign-in').addEventListener('click', () => { ZoteroAsk_account().cancelSignIn().catch(error => ZoteroAsk_logError('cancelling sign-in failed', error)); });
+  panel.querySelector('#za-sign-out-note').textContent = ZOTERO_ASK_CORE.SIGN_OUT_NOTE;
+  const signOutConfirm = panel.querySelector('.za-sign-out-confirm');
+  panel.querySelector('.za-sign-out').addEventListener('click', () => {
+    signOutConfirm.hidden = false;
+    panel.querySelector('.za-confirm-sign-out').focus();
+  });
+  panel.querySelector('.za-keep-signed-in').addEventListener('click', () => {
+    signOutConfirm.hidden = true;
+    panel.querySelector('.za-sign-out').focus();
+  });
+  panel.querySelector('.za-confirm-sign-out').addEventListener('click', async () => {
+    signOutConfirm.hidden = true;
+    state.status.classList.remove('za-error');
+    try {
+      await ZoteroAsk_account().signOut();
+      state.status.textContent = 'Signed out of Codex on this Mac.';
+    } catch (error) {
+      state.status.textContent = error?.message || String(error);
+      state.status.classList.add('za-error');
+    }
+  });
+  state.instructions.value = ZoteroAsk_instructions();
+  state.instructions.addEventListener('input', () => ZoteroAsk_setPref('instructions', ZOTERO_ASK_CORE.normalizeInstructions(state.instructions.value)));
+  panel.querySelector('.za-reset-instructions').addEventListener('click', () => {
+    state.instructions.value = ZOTERO_ASK_CORE.DEFAULT_INSTRUCTIONS;
+    ZoteroAsk_setPref('instructions', ZOTERO_ASK_CORE.DEFAULT_INSTRUCTIONS);
+    state.instructions.focus();
+  });
   panel.addEventListener('dblclick', event => {
     const tab = event.target.closest('.za-tab');
     if (tab) ZoteroAsk_renameChat(state, tab.dataset.chatId);
@@ -331,7 +427,7 @@ async function ZoteroAsk_activateDocument(state, reader) {
     if (!item || !item.isPDFAttachment()) throw new Error('This reader tab is not a PDF attachment.');
     const key = `${item.libraryID}-${item.key}`;
     if (state.item?.cacheKey === key) {
-      void ZoteroAsk_loadModels(state);
+      void ZoteroAsk_refreshAccountAndModels(state);
       return;
     }
     state.item = { id: item.id, key: item.key, libraryID: item.libraryID, cacheKey: key, path: null, fingerprint: '' };
@@ -346,7 +442,7 @@ async function ZoteroAsk_activateDocument(state, reader) {
     if (!state.chats.length) ZoteroAsk_newChat(state, false);
     ZoteroAsk_renderChats(state);
     state.status.textContent = '';
-    void ZoteroAsk_loadModels(state);
+    void ZoteroAsk_refreshAccountAndModels(state);
   } catch (error) {
     state.status.textContent = error?.message || String(error);
     state.status.classList.add('za-error');
@@ -485,9 +581,96 @@ async function ZoteroAsk_loadModels(state) {
     ZoteroAsk_modelChanged(state, false);
     state.status.textContent = '';
   } catch (error) {
+    if (ZoteroAsk_account().status.state === 'signed-out') { state.status.textContent = ''; return; }
     state.status.textContent = error?.message || String(error);
     state.status.classList.add('za-error');
   }
+}
+
+function ZoteroAsk_instructions() {
+  return ZOTERO_ASK_CORE.normalizeInstructions(ZoteroAsk_pref('instructions', ZOTERO_ASK_CORE.DEFAULT_INSTRUCTIONS));
+}
+
+function ZoteroAsk_openPanels() {
+  const panels = [];
+  for (const state of ZOTERO_ASK_PANELS) {
+    try {
+      // Closed reader tabs leave dead wrappers behind; drop them instead of throwing.
+      if (!(typeof Cu !== 'undefined' && Cu.isDeadWrapper?.(state.panel)) && state.panel.isConnected) { panels.push(state); continue; }
+    } catch (_) {}
+    ZOTERO_ASK_PANELS.delete(state);
+  }
+  return panels;
+}
+
+function ZoteroAsk_home() {
+  try { return Services.dirsvc.get('Home', Ci.nsIFile).path; } catch (_) { return ''; }
+}
+
+// A short, redacted description of an error for the panel and Zotero's debug output.
+function ZoteroAsk_describeError(error) {
+  if (error === undefined || error === null) return 'no details (a promise was rejected without a reason)';
+  return ZOTERO_ASK_CORE.redactDiagnostics(error?.message || String(error), { home: ZoteroAsk_home() });
+}
+
+function ZoteroAsk_logError(context, error) {
+  try {
+    const stack = typeof error?.stack === 'string' ? ZOTERO_ASK_CORE.redactDiagnostics(error.stack.split('\n').slice(0, 3).join(' | '), { home: ZoteroAsk_home(), limit: 300 }) : '';
+    Zotero.debug(`Zotero Ask ${context}: ${ZoteroAsk_describeError(error)}${stack ? ` [${stack}]` : ''}`);
+  } catch (_) {}
+}
+
+// One Codex sign-in is shared by every Ask panel (and by other Codex apps on this Mac).
+function ZoteroAsk_account() {
+  if (ZOTERO_ASK_ACCOUNT) return ZOTERO_ASK_ACCOUNT;
+  ZOTERO_ASK_ACCOUNT = ZOTERO_ASK_CORE.createAccountFlow({
+    getServer: ZoteroAsk_getServer,
+    openURL: url => Zotero.launchURL(url),
+    isBusy: () => ZoteroAsk_openPanels().some(state => state.busy) || (ZOTERO_ASK_SERVER?.turns.size || 0) > 0,
+    resetSessions: async () => {
+      // Threads belong to the previous account. Conversations stay; the next question starts a fresh thread.
+      for (const state of ZoteroAsk_openPanels()) { state.sessions.clear(); state.authExpired = false; }
+      if (ZOTERO_ASK_SERVER && !ZOTERO_ASK_SERVER.turns.size) ZOTERO_ASK_SERVER.close();
+    },
+    refreshModels: async () => { await Promise.all(ZoteroAsk_openPanels().map(state => ZoteroAsk_loadModels(state))); },
+    onChange: () => {
+      for (const state of ZoteroAsk_openPanels()) {
+        try { ZoteroAsk_renderAccount(state); } catch (error) { ZoteroAsk_logError('could not update a panel', error); }
+      }
+    },
+    onError: error => ZoteroAsk_logError('account status update failed', error)
+  });
+  return ZOTERO_ASK_ACCOUNT;
+}
+
+async function ZoteroAsk_refreshAccountAndModels(state) {
+  let account = null;
+  try { account = await ZoteroAsk_account().refresh(); } catch (error) { ZoteroAsk_logError('account check failed', error); }
+  // Render this panel directly too, so its status never depends on the shared panel registry alone.
+  try { ZoteroAsk_renderAccount(state); } catch (error) { ZoteroAsk_logError('could not update the panel', error); }
+  if (account?.state !== 'signed-out') await ZoteroAsk_loadModels(state);
+}
+
+function ZoteroAsk_renderAccount(state) {
+  const status = ZoteroAsk_account().status;
+  const find = selector => state.panel.querySelector(selector);
+  const busy = ZoteroAsk_openPanels().some(panel => panel.busy);
+  const statusNode = find('.za-account-status');
+  statusNode.textContent = status.text;
+  statusNode.dataset.state = status.state;
+  find('.za-settings-toggle').title = `Account and settings · ${status.text}`;
+  find('.za-sign-in').hidden = !(status.state === 'signed-out' || status.state === 'error' || state.authExpired);
+  find('.za-cancel-sign-in').hidden = status.state !== 'signing-in';
+  const signOut = find('.za-sign-out');
+  signOut.hidden = !status.canSignOut;
+  signOut.disabled = busy;
+  signOut.title = busy ? 'Stop the running question before signing out.' : '';
+  if (!status.canSignOut || busy) find('.za-sign-out-confirm').hidden = true;
+  const signingIn = status.state === 'signing-in';
+  find('.za-account-prompt').hidden = !(signingIn || state.authExpired || status.state === 'signed-out');
+  find('.za-account-prompt-text').textContent = signingIn ? status.text
+    : state.authExpired ? 'Your Codex sign-in expired.' : 'Sign in to Codex to ask about this paper.';
+  find('.za-prompt-sign-in').hidden = signingIn;
 }
 
 function ZoteroAsk_modelChanged(state, persist = true) {
@@ -519,11 +702,21 @@ function ZoteroAsk_modelChanged(state, persist = true) {
 }
 
 async function ZoteroAsk_getServer() {
-  if (ZOTERO_ASK_SERVER && !ZOTERO_ASK_SERVER.closed) return ZOTERO_ASK_SERVER;
-  if (ZOTERO_ASK_SHUTTING_DOWN) throw new Error('Zotero Ask is shutting down.');
-  ZOTERO_ASK_SERVER = new ZoteroAsk_CodexServer();
-  await ZOTERO_ASK_SERVER.start();
-  return ZOTERO_ASK_SERVER;
+  if (!ZOTERO_ASK_SERVER || ZOTERO_ASK_SERVER.closed) {
+    if (ZOTERO_ASK_SHUTTING_DOWN) throw new Error('Zotero Ask is shutting down.');
+    ZOTERO_ASK_SERVER = new ZoteroAsk_CodexServer();
+  }
+  // Concurrent callers (for example opening Ask and its settings together) share one startup.
+  const server = ZOTERO_ASK_SERVER;
+  try {
+    await server.start();
+  } catch (error) {
+    if (ZOTERO_ASK_SERVER === server) ZOTERO_ASK_SERVER = null;
+    server.close();
+    ZoteroAsk_logError('could not start Codex', error);
+    throw error ?? new Error('Codex could not start.');
+  }
+  return server;
 }
 
 class ZoteroAsk_CodexServer {
@@ -535,12 +728,24 @@ class ZoteroAsk_CodexServer {
     this.closed = false;
     this.ready = null;
     this.models = null;
+    this.executable = '';
+    this.phase = 'finding the Codex CLI';
+    this.stderrTail = '';
+    this.exitStatus = '';
   }
 
   async start() {
     if (this.ready) return this.ready;
-    this.ready = this._start();
+    // Bound the steps before the first request (finding and launching Codex), which have no timeout of their own.
+    this.ready = ZOTERO_ASK_CORE.withDeadline(this._start(), 35000,
+      () => `Codex did not finish starting within 35 s (${this.phase}).${this.diagnostics()}`);
     return this.ready;
+  }
+
+  // A short, redacted explanation of what the Codex process reported, for error messages.
+  diagnostics() {
+    const output = ZOTERO_ASK_CORE.redactDiagnostics(this.stderrTail, { home: ZoteroAsk_home() });
+    return `${this.exitStatus ? ` Codex ${this.exitStatus}.` : ''}${output ? ` Codex output: ${output}` : ''}`;
   }
 
   async _start() {
@@ -557,24 +762,37 @@ class ZoteroAsk_CodexServer {
       } catch (_) {}
     }
     if (!executable) throw new Error('Codex CLI was not found. Install or sign in to Codex on this Mac.');
-    this.process = await Subprocess.call({
-      command: executable,
-      arguments: ['app-server', '--stdio', '--config', 'mcp_servers={}', '--config', 'features.hooks=false', '--config', 'features.plugins=false',
-        '--config', 'features.remote_plugin=false', '--config', 'features.apps=false', '--config', 'features.shell_tool=false', '--config', 'features.skill_search=false',
-        '--config', 'web_search="disabled"', '--config', 'notify=[]', '--config', 'project_doc_max_bytes=0',
-        '--config', 'sandbox_mode="read-only"', '--config', 'approval_policy="never"'],
-      environment: { OPENAI_API_KEY: null, ELECTRON_RUN_AS_NODE: null,
-        PATH: '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',
-        HOME: homeDir, TMPDIR: PathUtils.tempDir, LANG: 'en_US.UTF-8' },
-      environmentAppend: true, stderr: 'pipe', workdir: PathUtils.tempDir
-    });
+    this.executable = executable;
+    this.phase = `starting ${executable}`;
+    try {
+      this.process = await Subprocess.call({
+        command: executable,
+        arguments: ['app-server', '--stdio', '--config', 'mcp_servers={}', '--config', 'features.hooks=false', '--config', 'features.plugins=false',
+          '--config', 'features.remote_plugin=false', '--config', 'features.apps=false', '--config', 'features.shell_tool=false', '--config', 'features.skill_search=false',
+          '--config', 'web_search="disabled"', '--config', 'notify=[]', '--config', 'project_doc_max_bytes=0',
+          '--config', 'sandbox_mode="read-only"', '--config', 'approval_policy="never"'],
+        environment: { OPENAI_API_KEY: null, ELECTRON_RUN_AS_NODE: null,
+          PATH: '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+          HOME: homeDir, TMPDIR: PathUtils.tempDir, LANG: 'en_US.UTF-8' },
+        environmentAppend: true, stderr: 'pipe', workdir: PathUtils.tempDir
+      });
+    } catch (error) {
+      throw new Error(`Codex could not start (${ZoteroAsk_describeError(error)}).`);
+    }
+    if (this.closed) { try { this.process.kill(); } catch (_) {} throw new Error('Codex connection closed.'); }
     void this._readStream(this.process.stdout, false);
-    void this._readStream(this.process.stderr, true);
-    void this.process.wait().then(result => {
-      if (!this.closed) this._failAll(new Error(`Codex app-server stopped (${result.exitCode}).`));
+    const stderrDone = this._readStream(this.process.stderr, true);
+    void this.process.wait().then(async result => {
+      // Let the last diagnostic output arrive before reporting the exit.
+      await ZOTERO_ASK_CORE.withDeadline(stderrDone, 1000, 'stderr').catch(() => {});
+      if (this.closed) return;
+      this.exitStatus = `exited with code ${result?.exitCode}`;
+      this._failAll(new Error(`Codex connection closed.${this.diagnostics()}`));
     }).catch(() => {});
+    this.phase = 'waiting for initialize';
     await this.rpc('initialize', { clientInfo: { name: 'zotero-ask', title: 'Zotero Ask', version: ZOTERO_ASK_VERSION } });
     this.send({ method: 'initialized' });
+    this.phase = 'ready';
     return this;
   }
 
@@ -584,7 +802,8 @@ class ZoteroAsk_CodexServer {
       for (;;) {
         const chunk = await stream.readString();
         if (!chunk) break;
-        if (diagnostic) continue;
+        // Keep a bounded tail of diagnostics; it is redacted before being shown or logged.
+        if (diagnostic) { this.stderrTail = (this.stderrTail + chunk).slice(-4000); continue; }
         buffer += chunk;
         let index;
         while ((index = buffer.indexOf('\n')) >= 0) {
@@ -593,7 +812,7 @@ class ZoteroAsk_CodexServer {
           try { this.receive(JSON.parse(line)); } catch (_) { /* Ignore non-protocol diagnostics. */ }
         }
       }
-    } catch (error) { if (!this.closed) this._failAll(error); }
+    } catch (error) { if (!this.closed) this._failAll(new Error(`Codex output could not be read (${ZoteroAsk_describeError(error)}).${this.diagnostics()}`)); }
   }
 
   send(message) {
@@ -605,7 +824,10 @@ class ZoteroAsk_CodexServer {
     if (this.closed) return Promise.reject(new Error('Codex connection is closed.'));
     return new Promise((resolve, reject) => {
       const id = ++this.serial;
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Codex timed out.')); }, 30000);
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Codex connection timed out waiting for ${method} after 30 s (${ZOTERO_ASK_CORE.redactDiagnostics(this.executable, { home: ZoteroAsk_home() })}).${this.diagnostics()}`));
+      }, 30000);
       this.pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
       try { this.send({ id, method, params }); } catch (error) { this.pending.delete(id); clearTimeout(timer); reject(error); }
     });
@@ -625,6 +847,7 @@ class ZoteroAsk_CodexServer {
       return;
     }
     const params = message.params || {};
+    if (message.method === 'account/login/completed') { ZOTERO_ASK_ACCOUNT?.loginCompleted(params).catch(error => ZoteroAsk_logError('sign-in completion failed', error)); return; }
     if (message.method === 'item/agentMessage/delta') {
       const turn = this.turns.get(params.threadId);
       if (turn && typeof params.delta === 'string') { turn.answer += params.delta; turn.onDelta?.(params.delta); }
@@ -697,6 +920,7 @@ class ZoteroAsk_CodexServer {
 
   _failAll(error) {
     this.closed = true;
+    error = error ?? new Error(`Codex connection closed.${this.diagnostics()}`);
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     for (const turn of this.turns.values()) turn.reject(error);
@@ -804,6 +1028,7 @@ async function ZoteroAsk_submit(state) {
   state.input.value = '';
   state.busy = true;
   state.sendButton.textContent = 'Stop';
+  ZoteroAsk_renderAccount(state);
   state.status.textContent = 'Preparing the full paper…';
   await ZoteroAsk_saveChats(state);
   ZoteroAsk_renderChats(state);
@@ -834,7 +1059,7 @@ async function ZoteroAsk_submit(state) {
     const pagesForPrompt = newThread ? documentCache.pages : [];
     const history = newThread ? chat.messages.slice(0, -2) : [];
     const prompt = ZOTERO_ASK_CORE.buildPrompt({ metadata: state.metadata, pages: pagesForPrompt, question,
-      selection, history, includeDocument: newThread });
+      selection, history, includeDocument: newThread, instructions: ZoteroAsk_instructions() });
     const input = [{ type: 'text', text: prompt, text_elements: [] }, ...imagePaths.map(image => ({ type: 'localImage', path: image.path }))];
     const effortLabel = effort ? (effort === 'xhigh' ? 'Extra high' : effort[0].toUpperCase() + effort.slice(1)) : 'Default';
     assistantMessage.model = `${model.label} · ${effortLabel}${fast ? ' · Fast' : ''}`;
@@ -855,10 +1080,16 @@ async function ZoteroAsk_submit(state) {
     state.status.textContent = 'Could not complete the question.';
     state.status.classList.add('za-error');
     if (threadID) state.sessions.delete(chat.id);
+    if (ZOTERO_ASK_CORE.isAuthError(assistantMessage.text)) {
+      state.authExpired = true;
+      state.status.textContent = 'Your Codex sign-in expired. Sign in to continue.';
+      ZoteroAsk_account().refresh().catch(refreshError => ZoteroAsk_logError('account check failed', refreshError));
+    }
   } finally {
     for (const image of imagePaths) { try { await IOUtils.remove(image.path, { ignoreAbsent: true }); } catch (_) {} }
     state.busy = false;
     state.sendButton.textContent = 'Ask';
+    ZoteroAsk_renderAccount(state);
     ZoteroAsk_renderChats(state);
     await ZoteroAsk_saveChats(state);
   }

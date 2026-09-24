@@ -54,3 +54,10 @@ with ZipFile(output) as archive:
         raise SystemExit("XPI KaTeX stylesheet does not embed every font.")
 print(f"{output} (KaTeX {installed}, {font_faces} fonts inlined)")
 PY
+# Exercise the shipped bootstrap.js + core.js combination from inside the XPI.
+xpi=$(ls dist/zotero-ask-*.xpi)
+if ! ZOTERO_ASK_XPI="$xpi" node --test tests/shipped.test.cjs > /dev/null; then
+  echo "Shipped XPI check failed. Rerun: ZOTERO_ASK_XPI=$xpi node --test tests/shipped.test.cjs" >&2
+  exit 1
+fi
+echo "Shipped XPI check passed"
