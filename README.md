@@ -4,11 +4,7 @@ Ask questions about a paper without leaving Zotero’s PDF reader. Zotero Ask ad
 
 ![Illustrative preview of the Zotero Ask sidebar beside a placeholder PDF: conversation tabs, a question, an answer with typeset LaTeX, and the composer. Rendered from the plugin's own code with synthetic content; not a screenshot of a running Zotero window](screenshots/zotero-ask-sidebar.png)
 
-*Illustrative preview: the Ask sidebar rendered from the plugin code (0.2.1) with a synthetic paper, conversation, and model. Not captured from Zotero.*
-
-![Illustrative preview of the Zotero Ask Account and settings panel: a placeholder signed-in Codex account, the Sign out of Codex on this Mac button, and editable Response instructions with Reset. Rendered with synthetic content; not a screenshot of a running Zotero window](screenshots/zotero-ask-account-settings.png)
-
-*Illustrative preview: Account and settings (gear button) with a placeholder account (reader@example.org) and the default Response instructions. Not captured from Zotero.*
+*Illustrative preview: the Ask sidebar rendered from the plugin code with a synthetic paper, conversation, and model. Not captured from Zotero.*
 
 ## What it does
 
