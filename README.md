@@ -8,7 +8,7 @@ Ask questions about a paper without leaving Zotero’s PDF reader. Zotero Ask ad
 
 ## What it does
 
-- Opens as a sidebar in the Zotero PDF reader.
+- Opens as a sidebar beside the PDF in Zotero's reader; the document narrows to make room, so nothing is hidden under the panel.
 - Uses the paper text and question-relevant page images, which helps with figures and tables.
 - Keeps separate local conversations for each PDF attachment.
 - Keeps typing, selecting, and copying in Ask from triggering Zotero reader shortcuts.
@@ -34,7 +34,7 @@ Zotero Ask talks to the Codex app-server started by the CLI on your computer. It
 
 ### 2. Install the Zotero plugin
 
-1. Download `zotero-ask-0.2.3.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
+1. Download `zotero-ask-0.2.4.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
 2. In Zotero, choose **Tools → Plugins**.
 3. Open the gear menu and choose **Install Plugin From File…**.
 4. Select the downloaded XPI and restart Zotero if prompted.

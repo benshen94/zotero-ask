@@ -97,3 +97,12 @@ test('Enter sends, Shift+Enter adds a line, and blocked sends never insert newli
   assert.equal(core.composerKeyAction(key(), { ...ready, text: '  \n ' }), 'block');
   assert.equal(core.composerKeyAction({ key: 'a' }, ready), 'default');
 });
+
+test('renders bullet and numbered lists without breaking surrounding lines', () => {
+  const html = render('Starting papers:\n- **Jones (2014)**, *Nature*\n- Baudisch $\\mu(x)$\nSteps:\n1. Read\n2. Compare\nDone.');
+  assert.match(html, /^Starting papers:<ul><li><strong>Jones \(2014\)<\/strong>, <em>Nature<\/em><\/li><li>Baudisch <span class="katex">/);
+  assert.match(html, /<\/ul>Steps:<ol><li>Read<\/li><li>Compare<\/li><\/ol>Done\.$/);
+  assert.equal(render('*Nature* is a journal.'), '<em>Nature</em> is a journal.', 'emphasis at line start is not a list');
+  assert.equal(render('a\n\nb'), 'a<br><br>b', 'blank lines still separate paragraphs');
+  assert.equal(render('Intro:\n\n- one\n- two\n\nAfter.'), 'Intro:<ul><li>one</li><li>two</li></ul>After.', 'no extra gaps around a list');
+});

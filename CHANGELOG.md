@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4 — 2026-09-25
+
+- Ask now sits beside the PDF instead of on top of it: opening Ask narrows the reader's document area, so zoomed-in text is never hidden behind the panel, and resizing Ask moves the edge with it. The panel starts below the reader toolbar, so the toolbar stays usable.
+- A calmer panel: the composer is just the text box and Ask. The save note, instructions line, key hint, and privacy line moved into Account and settings (the key hint is still announced to screen readers and shown as a tooltip).
+- Answers render formatted Markdown, lists, and math while they stream, and the conversation only follows new text when you are already at the bottom.
+- Bulleted and numbered lists now render as lists.
+
 ## 0.2.3 — 2026-09-24
 
 - Typing in Ask no longer triggers Zotero reader shortcuts. Zotero's reader did not treat Ask's text boxes as text fields, so r or l started Read Aloud, other letters switched tools or highlight colors and were swallowed, Backspace could delete a selected annotation, and Tab jumped out of the panel. Ask now runs in its own document inside the reader, so typing, ⌘A, ⌘C, ⌘V, Backspace, and Tab behave normally, and answer text can be selected and copied.
