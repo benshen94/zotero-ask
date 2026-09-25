@@ -198,6 +198,38 @@ var ZoteroAskCore = (() => {
     };
   }
 
+  // Join lines with <br>, turning runs of "- item", "* item", or "1. item" lines into lists.
+  function linesToHTML(text) {
+    const out = [];
+    let lines = [];
+    let list = null;
+    const flushLines = () => { if (lines.length) out.push(lines.join('<br>')); lines = []; };
+    let afterList = false;
+    const flushList = () => {
+      if (list) out.push(`<${list.type}>${list.items.map(item => `<li>${item}</li>`).join('')}</${list.type}>`);
+      list = null;
+    };
+    for (const line of text.split('\n')) {
+      const item = /^\s*(?:[-*•]|(\d+)[.)])\s+(.*)$/.exec(line);
+      if (!item) {
+        flushList();
+        // A list already has its own spacing; blank lines right next to it would add more.
+        if (!(afterList && !line.trim())) { lines.push(line); afterList = false; }
+        continue;
+      }
+      const type = item[1] ? 'ol' : 'ul';
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      flushLines();
+      afterList = true;
+      if (list && list.type !== type) flushList();
+      if (!list) list = { type, items: [] };
+      list.items.push(item[2]);
+    }
+    flushList();
+    flushLines();
+    return out.join('');
+  }
+
   function renderMarkdown(source, renderMath = null) {
     const slots = [];
     const hold = html => `\u0000${slots.push(html) - 1}\u0000`;
@@ -216,8 +248,8 @@ var ZoteroAskCore = (() => {
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
       .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noreferrer">$1</a>')
-      .replace(/^&gt; ?(.+)$/gm, '<blockquote>$1</blockquote>')
-      .replace(/\n/g, '<br>');
+      .replace(/^&gt; ?(.+)$/gm, '<blockquote>$1</blockquote>');
+    text = linesToHTML(text);
     return text.replace(/\u0000(\d+)\u0000/g, (_, index) => slots[Number(index)] ?? '');
   }
 

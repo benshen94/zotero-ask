@@ -1,5 +1,5 @@
 const ZOTERO_ASK_ID = 'zotero-ask@benshenhar.com';
-const ZOTERO_ASK_VERSION = '0.2.3';
+const ZOTERO_ASK_VERSION = '0.2.4';
 const ZOTERO_ASK_PREF = 'extensions.zoteroAsk.';
 const ZOTERO_ASK_DEFAULT_WIDTH = 390;
 // A turn fails only when Codex sends nothing for this long; long answers keep streaming past it.
@@ -55,6 +55,7 @@ function shutdown() {
     const doc = ref.deref();
     if (!doc) continue;
     try { ZoteroAsk_removeNodes(doc, '#zotero-ask-toolbar-button, #zotero-ask-panel, #zotero-ask-style'); } catch (_) {}
+    try { doc.documentElement.classList.remove('za-ask-open'); doc.documentElement.style.removeProperty('--za-ask-width'); } catch (_) {}
   }
   ZOTERO_ASK_RENDERED_DOCS.clear();
   for (const state of ZOTERO_ASK_PANELS) { try { state.panel.remove(); } catch (_) {} }
@@ -195,16 +196,31 @@ function ZoteroAsk_togglePanel(reader, doc) {
   }
   if (state.panel.hidden) {
     ZoteroAsk_ensureStyle(doc);
-    state.panel.hidden = false;
-    state.button?.setAttribute('aria-pressed', 'true');
+    ZoteroAsk_setPanelOpen(state, true);
     if (state.doc.activeElement !== state.instructions) state.instructions.value = ZoteroAsk_instructions();
     ZoteroAsk_renderAccount(state);
     state.input.focus();
     void ZoteroAsk_activateDocument(state, reader);
   } else {
-    state.panel.hidden = true;
-    state.button?.setAttribute('aria-pressed', 'false');
+    ZoteroAsk_setPanelOpen(state, false);
   }
+}
+
+// Ask sits beside the PDF rather than over it: while it is open, the reader's document area (#split-view)
+// ends where the panel begins, and the panel starts below the reader toolbar.
+function ZoteroAsk_setPanelOpen(state, open) {
+  const doc = state.readerDoc;
+  state.panel.hidden = !open;
+  state.button?.setAttribute('aria-pressed', String(open));
+  doc.documentElement.classList.toggle('za-ask-open', open);
+  if (!open) return;
+  const top = doc.getElementById('split-view')?.getBoundingClientRect().top;
+  state.panel.style.top = `${Number.isFinite(top) && top > 0 ? Math.round(top) : 41}px`;
+  ZoteroAsk_dockWidth(state);
+}
+
+function ZoteroAsk_dockWidth(state) {
+  state.readerDoc.documentElement.style.setProperty('--za-ask-width', `${Math.round(state.panel.getBoundingClientRect().width)}px`);
 }
 
 function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
@@ -217,6 +233,7 @@ function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
     .zotero-ask-selection-action { font:inherit; }
     #zotero-ask-panel { --za-bg:light-dark(#f4f4f2,#232325); --za-surface:light-dark(#fff,#1b1b1d); --za-text:light-dark(#1d1d1f,#ececee); --za-text-2:light-dark(#4f4f55,#b4b4bb); --za-text-3:light-dark(#66666d,#9a9aa1); --za-line:light-dark(#0000001a,#ffffff1c); --za-line-strong:light-dark(#00000033,#ffffff33); --za-hover:light-dark(#0000000f,#ffffff14); --za-accent:light-dark(#2563c9,#8ab4ff); --za-accent-hover:light-dark(#1d52a8,#a6c6ff); --za-on-accent:light-dark(#fff,#0d1b33); --za-accent-tint:light-dark(#2563c90f,#8ab4ff14); --za-quote:#ffd400; --za-quote-tint:light-dark(#ffd4002e,#ffd4001f); --za-error:light-dark(#b42318,#ff8a80); --za-serif:"Iowan Old Style","Charter","Georgia",serif; --za-mono:ui-monospace,SFMono-Regular,Menlo,monospace; --za-radius:5px; --za-control-height:26px; position:fixed; z-index:2147483000; inset:0 0 0 auto; width:${Number(ZoteroAsk_pref('width', ZOTERO_ASK_DEFAULT_WIDTH))}px; max-width:85vw; display:flex; flex-direction:column; color:var(--za-text); background:var(--za-bg); border-left:1px solid var(--za-line-strong); box-shadow:-1px 0 4px #00000014; font:13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light dark; }
     #zotero-ask-panel[hidden] { display:none !important; }
+    :root.za-ask-open #split-view, :root.za-ask-open .split-view { inset-inline-end:var(--za-ask-width, 390px) !important; }
     #zotero-ask-panel * { box-sizing:border-box; }
     #zotero-ask-panel [hidden] { display:none !important; }
     #zotero-ask-panel .za-resize { position:absolute; inset:0 auto 0 -4px; width:8px; cursor:ew-resize; z-index:1; touch-action:none; }
@@ -279,6 +296,8 @@ function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
     #zotero-ask-panel .za-message-content h3, #zotero-ask-panel .za-message-content h4 { margin:10px 0 0; font-size:13px; font-weight:650; line-height:1.3; }
     #zotero-ask-panel .za-message-content h3 { font-size:14px; }
     #zotero-ask-panel .za-message-content :is(h3,h4) + br { display:none; }
+    #zotero-ask-panel .za-message-content :is(ul, ol) { margin:4px 0 6px; padding-left:20px; }
+    #zotero-ask-panel .za-message-content li { margin:2px 0; }
     #zotero-ask-panel .za-message-content blockquote { margin:2px 0; padding-left:9px; border-left:2px solid var(--za-line-strong); color:var(--za-text-2); }
     #zotero-ask-panel .za-message-content pre { margin:6px 0; padding:8px 10px; overflow:auto; white-space:pre-wrap; border:1px solid var(--za-line); border-radius:var(--za-radius); background:var(--za-bg); font-size:12px; line-height:1.45; }
     #zotero-ask-panel .za-message-content code { font-family:var(--za-mono); font-size:.92em; }
@@ -289,9 +308,11 @@ function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
     #zotero-ask-panel .za-message-content .katex-display + br { display:none; }
     #zotero-ask-panel .za-message-content .za-math-source { font-family:var(--za-mono); font-size:.92em; color:var(--za-text-2); }
 
-    #zotero-ask-panel .za-save-note { padding:5px 12px 0; border-top:1px solid var(--za-line); color:var(--za-text-3); font-size:11px; }
-    #zotero-ask-panel .za-composer { padding:6px 12px 10px; background:var(--za-bg); }
-    #zotero-ask-panel .za-composer-intro { margin:0 0 6px; color:var(--za-text-2); font-size:12px; line-height:1.4; }
+    #zotero-ask-panel .za-composer { padding:8px 12px 10px; border-top:1px solid var(--za-line); background:var(--za-bg); }
+    #zotero-ask-panel .za-input-row { display:flex; align-items:flex-end; gap:8px; }
+    #zotero-ask-panel .za-input-row textarea { flex:1; min-width:0; min-height:44px; }
+    #zotero-ask-panel .za-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+    #zotero-ask-panel .za-settings-note { margin:0; color:var(--za-text-3); font-size:11px; line-height:1.45; }
     #zotero-ask-panel .za-selection { margin-bottom:6px; padding:3px 4px 5px 9px; border-left:3px solid var(--za-quote); border-radius:0 var(--za-radius) var(--za-radius) 0; background:var(--za-quote-tint); }
     #zotero-ask-panel .za-selection-head { display:flex; align-items:center; justify-content:space-between; gap:6px; color:var(--za-text-2); font-size:11px; font-weight:600; }
     #zotero-ask-panel .za-selection-clear { width:20px; height:20px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--za-text-2); font-size:15px; line-height:1; text-align:center; }
@@ -300,9 +321,6 @@ function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
     #zotero-ask-panel textarea { display:block; width:100%; min-height:60px; max-height:180px; padding:7px 9px; resize:vertical; border:1px solid var(--za-line-strong); border-radius:var(--za-radius); background:var(--za-surface); line-height:1.45; }
     #zotero-ask-panel textarea::placeholder { color:var(--za-text-3); opacity:1; }
     #zotero-ask-panel textarea:focus-visible { border-color:var(--za-accent); outline:2px solid transparent; box-shadow:0 0 0 2px color-mix(in srgb,var(--za-accent) 30%,transparent); }
-    #zotero-ask-panel .za-submit-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; }
-    #zotero-ask-panel .za-key-hint { min-width:0; color:var(--za-text-3); font-size:11px; line-height:1.35; }
-    #zotero-ask-panel .za-hint { margin:6px 0 0; color:var(--za-text-3); font-size:11px; line-height:1.35; }
     #zotero-ask-panel .za-send { flex:0 0 auto; min-width:64px; height:var(--za-control-height); padding:0 14px; border:0; border-radius:var(--za-radius); background:var(--za-accent); color:var(--za-on-accent); font-weight:600; }
     #zotero-ask-panel .za-send:not(:disabled):hover { background:var(--za-accent-hover); }
     #zotero-ask-panel .za-send:focus-visible { outline-offset:2px; }
@@ -364,13 +382,15 @@ function ZoteroAsk_createPanel(reader, doc) {
         <textarea class="za-instructions" id="za-instructions" maxlength="10000" aria-describedby="za-instructions-note"></textarea>
         <div class="za-instructions-row"><small id="za-instructions-note">Saved automatically · sent with every question</small><button type="button" class="za-button za-reset-instructions">Reset</button></div>
       </div>
+      <div class="za-settings-group">
+        <p class="za-settings-note">Each question sends the paper text, relevant page images, any selected passage, and your response instructions to your Codex model. Chats are saved locally with this PDF. Enter sends; Shift+Enter adds a line.</p>
+      </div>
     </section>
     <nav class="za-chat-tabs" aria-label="Chat tabs"></nav>
     <div class="za-status" role="status" aria-live="polite"></div>
     <div class="za-account-prompt" aria-live="polite" hidden><span class="za-account-prompt-text"></span><button type="button" class="za-button za-prompt-sign-in">Sign in</button></div>
     <main class="za-messages" role="log" aria-live="polite"></main>
-    <div class="za-save-note">Chats are saved locally with this PDF attachment.</div>
-    <form class="za-composer"><p class="za-composer-intro" id="za-composer-intro">Ask about this paper. Select a passage in the PDF to focus your question.</p><div class="za-selection" hidden><div class="za-selection-head"><span class="za-selection-label"></span><button type="button" class="za-selection-clear" aria-label="Remove selected passage" title="Remove selected passage">×</button></div><div class="za-selection-text"></div></div><textarea aria-label="Ask a question" aria-describedby="za-composer-intro za-key-hint" placeholder="Ask about this paper…"></textarea><div class="za-submit-row"><span class="za-key-hint" id="za-key-hint">Enter to send · Shift+Enter for a new line</span><button class="za-send" type="submit">Ask</button></div><p class="za-hint">Paper text, relevant page images, any selected passage, and your response instructions go to your Codex model.</p></form>
+    <form class="za-composer"><div class="za-selection" hidden><div class="za-selection-head"><span class="za-selection-label"></span><button type="button" class="za-selection-clear" aria-label="Remove selected passage" title="Remove selected passage">×</button></div><div class="za-selection-text"></div></div><div class="za-input-row"><textarea aria-label="Ask a question" aria-describedby="za-key-hint" title="Enter to send · Shift+Enter for a new line" placeholder="Ask about this paper…"></textarea><button class="za-send" type="submit">Ask</button></div><span class="za-sr-only" id="za-key-hint">Enter sends the question. Shift+Enter adds a new line. Select text in the PDF to attach it.</span></form>
   `;
   frameDoc.body.appendChild(root);
 
@@ -388,7 +408,7 @@ function ZoteroAsk_createPanel(reader, doc) {
   for (const other of ZOTERO_ASK_PANELS) if (other.readerDoc === doc) ZOTERO_ASK_PANELS.delete(other);
   ZOTERO_ASK_PANELS.add(state);
 
-  root.querySelector('.za-close').addEventListener('click', () => { panel.hidden = true; state.button?.setAttribute('aria-pressed', 'false'); });
+  root.querySelector('.za-close').addEventListener('click', () => ZoteroAsk_setPanelOpen(state, false));
   root.querySelector('.za-new').addEventListener('click', () => ZoteroAsk_newChat(state));
   root.querySelector('.za-composer').addEventListener('submit', event => { event.preventDefault(); void ZoteroAsk_submit(state); });
   state.input.addEventListener('keydown', event => {
@@ -407,6 +427,7 @@ function ZoteroAsk_createPanel(reader, doc) {
   const handle = panel.querySelector('.za-resize');
   const applyWidth = width => {
     panel.style.width = `${ZOTERO_ASK_CORE.clampPanelWidth(width, doc.defaultView?.innerWidth)}px`;
+    if (!panel.hidden) ZoteroAsk_dockWidth(state);
   };
   const saveWidth = () => ZoteroAsk_setPref('width', Math.round(panel.getBoundingClientRect().width));
   applyWidth(ZoteroAsk_pref('width', ZOTERO_ASK_DEFAULT_WIDTH));
@@ -602,7 +623,7 @@ function ZoteroAsk_renderChats(state) {
   if (!chat || !chat.messages.length) {
     const empty = state.doc.createElement('div');
     empty.className = 'za-empty';
-    empty.textContent = state.item ? 'Ask about this paper, a method, a result, or a figure. Answers use the full extracted text and selected page images.' : 'Open a PDF in Zotero to start a document chat.';
+    empty.textContent = state.item ? 'Ask anything about this paper.' : 'Open a PDF in Zotero to start a document chat.';
     state.log.appendChild(empty);
     return;
   }
@@ -1191,14 +1212,25 @@ async function ZoteroAsk_submit(state) {
     run.started = Date.now();
     run.phase = 'Thinking';
     tick();
+    let renderQueued = false;
+    const renderStreaming = () => {
+      renderQueued = false;
+      if (ZoteroAsk_activeChat(state)?.id !== chatID) return;
+      const bubble = state.log.lastElementChild?.querySelector('.za-message-content');
+      if (!bubble) return;
+      const log = state.log;
+      const following = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+      bubble.innerHTML = ZOTERO_ASK_CORE.renderMarkdown(assistantMessage.text, ZoteroAsk_renderMath);
+      if (following) log.scrollTop = log.scrollHeight;
+    };
     const answer = await server.ask(threadID, input, model, effort, fast, delta => {
-      if (run.phase !== 'Writing') { run.phase = 'Writing'; run.note = ''; }
-      assistantMessage.text += delta;
-      if (ZoteroAsk_activeChat(state)?.id === chatID) {
-        const bubble = state.log.lastElementChild?.querySelector('.za-message-content');
-        if (bubble) bubble.textContent = assistantMessage.text;
-        state.log.scrollTop = state.log.scrollHeight;
+      if (run.phase !== 'Writing') {
+        run.phase = 'Writing';
+        run.note = '';
+        ZoteroAsk_setRunStatus(state, chatID, `Writing… ${Math.round((Date.now() - run.started) / 1000)} s`);
       }
+      assistantMessage.text += delta;
+      if (!renderQueued) { renderQueued = true; setTimeout(renderStreaming, 100); }
     }, note => { run.note = note; });
     assistantMessage.text = answer;
     for (const image of images) sentPages.add(image.number);
@@ -1222,7 +1254,12 @@ async function ZoteroAsk_submit(state) {
     for (const image of imagePaths) { try { await IOUtils.remove(image.path, { ignoreAbsent: true }); } catch (_) {} }
     if (state.running.get(chatID) === run) state.running.delete(chatID);
     ZoteroAsk_renderAccount(state);
+    // Redraw the finished answer without pulling a reader who scrolled up back to the bottom.
+    const log = state.log;
+    const following = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+    const scrollTop = log.scrollTop;
     ZoteroAsk_renderChats(state);
+    if (!following) log.scrollTop = scrollTop;
     if (failed && !run.cancelled && state.activeChatID === chatID) {
       state.status.textContent = state.authExpired ? 'Your Codex sign-in expired. Sign in to continue.' : 'Could not complete the question.';
       state.status.classList.add('za-error');
