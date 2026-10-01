@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5 — 2026-10-01
+
+- Match Reader’s new Ask design: sage accents, rounded chat tabs, right-aligned question bubbles, and quieter typography.
+- Move model, reasoning, and Fast controls into the composer, with an accessible circular send/stop button.
+- Add a centered welcome view with question starters and an automatically growing input.
+- Preserve PDF docking, resizing, selected passages, math, account controls, and response instructions.
+
 ## 0.2.4 — 2026-09-25
 
 - Ask now sits beside the PDF instead of on top of it: opening Ask narrows the reader's document area, so zoomed-in text is never hidden behind the panel, and resizing Ask moves the edge with it. The panel starts below the reader toolbar, so the toolbar stays usable.

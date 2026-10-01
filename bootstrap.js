@@ -1,5 +1,5 @@
 const ZOTERO_ASK_ID = 'zotero-ask@benshenhar.com';
-const ZOTERO_ASK_VERSION = '0.2.4';
+const ZOTERO_ASK_VERSION = '0.2.5';
 const ZOTERO_ASK_PREF = 'extensions.zoteroAsk.';
 const ZOTERO_ASK_DEFAULT_WIDTH = 390;
 // A turn fails only when Codex sends nothing for this long; long answers keep streaming past it.
@@ -223,15 +223,34 @@ function ZoteroAsk_dockWidth(state) {
   state.readerDoc.documentElement.style.setProperty('--za-ask-width', `${Math.round(state.panel.getBoundingClientRect().width)}px`);
 }
 
+function ZoteroAsk_resizeInput(state) {
+  state.input.style.height = 'auto';
+  state.input.style.height = `${Math.min(180, Math.max(42, state.input.scrollHeight))}px`;
+}
+
+function ZoteroAsk_icon(name) {
+  const paths = {
+    settings: '<path d="M9 3h6l.5 3 2.5 1.5 2.8-1 3 5.2-2.3 2v3l2.3 2-3 5.2-2.8-1-2.5 1.5-.5 3H9l-.5-3L6 21l-2.8 1-3-5.2 2.3-2v-3l-2.3-2 3-5.2 2.8 1L8.5 6Z" transform="translate(3 0) scale(.75)"/><circle cx="12" cy="12" r="3"/>',
+    new: '<path d="M12 5v14M5 12h14"/>',
+    close: '<path d="m6 6 12 12M6 18 18 6"/>',
+    chevron: '<path d="m8 10 4 4 4-4"/>',
+    fast: '<path d="m13 3-8 11h6l-1 7 9-12h-6Z"/>',
+    send: '<path d="M12 19V5m-6 6 6-6 6 6"/>',
+    stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+    sparkle: '<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/>'
+  };
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ''}</svg>`;
+}
+
 function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
   if (doc.getElementById('zotero-ask-style')) return;
   const style = doc.createElement('style');
   style.id = 'zotero-ask-style';
   style.textContent = (content ? ZoteroAsk_katexCSS() : '') + `
     #zotero-ask-toolbar-button { min-width:42px; font-weight:600; }
-    #zotero-ask-toolbar-button[aria-pressed="true"] { color:light-dark(#2563c9,#8ab4ff); }
+    #zotero-ask-toolbar-button[aria-pressed="true"] { color:light-dark(#3b8558,#74c495); }
     .zotero-ask-selection-action { font:inherit; }
-    #zotero-ask-panel { --za-bg:light-dark(#f4f4f2,#232325); --za-surface:light-dark(#fff,#1b1b1d); --za-text:light-dark(#1d1d1f,#ececee); --za-text-2:light-dark(#4f4f55,#b4b4bb); --za-text-3:light-dark(#66666d,#9a9aa1); --za-line:light-dark(#0000001a,#ffffff1c); --za-line-strong:light-dark(#00000033,#ffffff33); --za-hover:light-dark(#0000000f,#ffffff14); --za-accent:light-dark(#2563c9,#8ab4ff); --za-accent-hover:light-dark(#1d52a8,#a6c6ff); --za-on-accent:light-dark(#fff,#0d1b33); --za-accent-tint:light-dark(#2563c90f,#8ab4ff14); --za-quote:#ffd400; --za-quote-tint:light-dark(#ffd4002e,#ffd4001f); --za-error:light-dark(#b42318,#ff8a80); --za-serif:"Iowan Old Style","Charter","Georgia",serif; --za-mono:ui-monospace,SFMono-Regular,Menlo,monospace; --za-radius:5px; --za-control-height:26px; position:fixed; z-index:2147483000; inset:0 0 0 auto; width:${Number(ZoteroAsk_pref('width', ZOTERO_ASK_DEFAULT_WIDTH))}px; max-width:85vw; display:flex; flex-direction:column; color:var(--za-text); background:var(--za-bg); border-left:1px solid var(--za-line-strong); box-shadow:-1px 0 4px #00000014; font:13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light dark; }
+    #zotero-ask-panel { --za-bg:light-dark(#fff,#202123); --za-surface:light-dark(#fff,#202123); --za-text:light-dark(#1d1d1f,#ececee); --za-text-2:light-dark(#4f4f55,#b4b4bb); --za-text-3:light-dark(#66666d,#9a9aa1); --za-line:light-dark(#0000001a,#ffffff1c); --za-line-strong:light-dark(#00000033,#ffffff33); --za-hover:light-dark(#0000000f,#ffffff14); --za-accent:light-dark(#3b8558,#74c495); --za-accent-hover:light-dark(#326f4a,#91d4ac); --za-on-accent:light-dark(#fff,#14291c); --za-accent-tint:light-dark(#3b85580f,#74c49514); --za-quote:#3b8558; --za-quote-tint:light-dark(#3b85582e,#3b85581f); --za-error:light-dark(#b42318,#ff8a80); --za-serif:"Iowan Old Style","Charter","Georgia",serif; --za-mono:ui-monospace,SFMono-Regular,Menlo,monospace; --za-radius:8px; --za-control-height:26px; position:fixed; z-index:2147483000; inset:0 0 0 auto; width:${Number(ZoteroAsk_pref('width', ZOTERO_ASK_DEFAULT_WIDTH))}px; max-width:85vw; display:flex; flex-direction:column; color:var(--za-text); background:var(--za-bg); border-left:1px solid var(--za-line-strong); box-shadow:-1px 0 4px #00000014; font:13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light dark; }
     #zotero-ask-panel[hidden] { display:none !important; }
     :root.za-ask-open #split-view, :root.za-ask-open .split-view { inset-inline-end:var(--za-ask-width, 390px) !important; }
     #zotero-ask-panel * { box-sizing:border-box; }
@@ -244,23 +263,23 @@ function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
     #zotero-ask-panel button { cursor:pointer; }
     #zotero-ask-panel :is(button,select,input,textarea):focus-visible { outline:2px solid var(--za-accent); outline-offset:1px; }
 
-    #zotero-ask-panel header { padding:8px 10px 8px 12px; display:flex; flex-direction:column; gap:5px; }
+    #zotero-ask-panel header { padding:10px 12px 8px; display:flex; flex-direction:column; gap:4px; }
     #zotero-ask-panel .za-title-row, #zotero-ask-panel .za-model-row { display:flex; align-items:center; gap:6px; }
     #zotero-ask-panel .za-title { flex:1; min-width:0; font-size:13px; font-weight:650; letter-spacing:.01em; }
-    #zotero-ask-panel .za-paper { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; margin-bottom:2px; color:var(--za-text-2); font:italic 12.5px/1.35 var(--za-serif); }
-    #zotero-ask-panel .za-icon { width:var(--za-control-height); min-width:var(--za-control-height); height:var(--za-control-height); padding:0; border:0; border-radius:var(--za-radius); background:transparent; color:var(--za-text-2); font-size:15px; line-height:1; }
+    #zotero-ask-panel .za-paper { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; color:var(--za-text-3); font-size:12px; line-height:1.45; }
+    #zotero-ask-panel .za-icon { display:inline-flex; align-items:center; justify-content:center; width:28px; min-width:28px; height:28px; padding:0; border:0; border-radius:7px; background:transparent; color:var(--za-text-2); }
     #zotero-ask-panel .za-icon:hover { color:var(--za-text); background:var(--za-hover); }
-    #zotero-ask-panel .za-model-row select { flex:1; min-width:0; height:var(--za-control-height); padding:0 6px; border:1px solid var(--za-line-strong); border-radius:var(--za-radius); background:var(--za-surface); font-size:12px; }
-    #zotero-ask-panel .za-model-row select.za-effort { flex:0 0 92px; }
+    #zotero-ask-panel .za-model-row select { appearance:none; width:100%; min-width:0; height:26px; padding:0 20px 0 8px; border:0; border-radius:7px; background:transparent; color:var(--za-text-2); font-size:12px; font-weight:500; text-overflow:ellipsis; }
+    #zotero-ask-panel .za-model-row select.za-effort { padding-left:6px; }
     #zotero-ask-panel .za-model-row select:disabled { color:var(--za-text-3); }
-    #zotero-ask-panel .za-fast { display:flex; align-items:center; gap:4px; height:var(--za-control-height); padding:0 2px; white-space:nowrap; color:var(--za-text-2); font-size:12px; }
-    #zotero-ask-panel .za-fast input { margin:0; accent-color:var(--za-accent); }
+    #zotero-ask-panel .za-fast { position:relative; display:flex; align-items:center; gap:3px; height:26px; padding:0 6px; border-radius:7px; white-space:nowrap; color:var(--za-text-2); font-size:12px; cursor:pointer; }
+    #zotero-ask-panel .za-fast input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; cursor:inherit; }
     #zotero-ask-panel .za-fast:has(input:disabled) { color:var(--za-text-3); }
 
-    #zotero-ask-panel .za-chat-tabs { display:flex; align-items:flex-end; gap:0; padding:0 6px; overflow-x:auto; border-bottom:1px solid var(--za-line); scrollbar-width:none; }
-    #zotero-ask-panel .za-tab { position:relative; flex:0 0 auto; max-width:160px; height:30px; margin-bottom:-1px; padding:0 22px 0 8px; border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:var(--za-text-3); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #zotero-ask-panel .za-chat-tabs { display:flex; align-items:center; gap:4px; padding:4px 12px 8px; overflow-x:auto; scrollbar-width:none; }
+    #zotero-ask-panel .za-tab { position:relative; flex:0 0 auto; max-width:160px; height:28px; padding:0 24px 0 10px; border:0; border-radius:8px; background:transparent; color:var(--za-text-3); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #zotero-ask-panel .za-tab:hover { color:var(--za-text); }
-    #zotero-ask-panel .za-tab[aria-selected="true"] { color:var(--za-text); border-bottom-color:var(--za-accent); font-weight:600; }
+    #zotero-ask-panel .za-tab[aria-selected="true"] { color:var(--za-text); background:var(--za-hover); font-weight:500; }
     #zotero-ask-panel .za-tab:focus-visible { outline-offset:-3px; border-radius:var(--za-radius) var(--za-radius) 0 0; }
     #zotero-ask-panel .za-tab-close { position:absolute; right:4px; top:50%; translate:0 -50%; width:16px; height:16px; border-radius:3px; color:var(--za-text-3); font-weight:400; line-height:16px; text-align:center; visibility:hidden; }
     #zotero-ask-panel .za-tab:is(:hover,:focus-visible,[aria-selected="true"]) .za-tab-close { visibility:visible; }
@@ -272,7 +291,7 @@ function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
     #zotero-ask-panel .za-button.za-danger { border-color:var(--za-error); color:var(--za-error); }
     #zotero-ask-panel .za-settings { max-height:45%; overflow:auto; padding:8px 12px 10px; border-bottom:1px solid var(--za-line); background:var(--za-bg); }
     #zotero-ask-panel .za-settings-group + .za-settings-group { margin-top:10px; padding-top:10px; border-top:1px solid var(--za-line); }
-    #zotero-ask-panel .za-settings-heading { display:block; margin:0 0 4px; color:var(--za-text-2); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; }
+    #zotero-ask-panel .za-settings-heading { display:block; margin:0 0 6px; color:var(--za-text-2); font-size:12px; font-weight:600; }
     #zotero-ask-panel .za-account-status { margin:0 0 6px; overflow-wrap:anywhere; font-size:12px; }
     #zotero-ask-panel .za-account-status[data-state="error"] { color:var(--za-error); }
     #zotero-ask-panel .za-account-status[data-state="loading"], #zotero-ask-panel .za-account-status[data-state="signing-in"] { color:var(--za-text-2); }
@@ -287,12 +306,12 @@ function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
     #zotero-ask-panel .za-status:empty { display:none; }
     #zotero-ask-panel .za-status.za-error { color:var(--za-error); }
 
-    #zotero-ask-panel .za-messages { flex:1; overflow:auto; padding:14px 14px 20px; background:var(--za-surface); }
-    #zotero-ask-panel .za-empty { padding:2px 0 2px 10px; border-left:2px solid var(--za-line-strong); color:var(--za-text-2); line-height:1.55; }
-    #zotero-ask-panel .za-message { margin:0 0 18px; overflow-wrap:anywhere; }
-    #zotero-ask-panel .za-message.za-user { padding:6px 10px 7px; border-left:3px solid var(--za-accent); border-radius:0 var(--za-radius) var(--za-radius) 0; background:var(--za-accent-tint); }
-    #zotero-ask-panel .za-message-label { margin-bottom:3px; color:var(--za-text-3); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; }
-    #zotero-ask-panel .za-assistant .za-message-content { line-height:1.55; }
+    #zotero-ask-panel .za-messages { display:flex; flex-direction:column; flex:1; min-height:0; overflow:auto; padding:12px 16px 6px; background:var(--za-surface); }
+    #zotero-ask-panel .za-empty { display:flex; flex:1; flex-direction:column; justify-content:center; align-items:center; gap:10px; padding:28px 8px; color:var(--za-text-2); text-align:center; }
+    #zotero-ask-panel .za-message { flex-shrink:0; margin:0 0 28px; overflow-wrap:anywhere; font-size:14px; line-height:1.6; }
+    #zotero-ask-panel .za-message.za-user { align-self:flex-end; max-width:86%; padding:10px 14px; border-radius:18px 18px 5px 18px; background:light-dark(#e6f1e9,#2b4134); }
+    #zotero-ask-panel .za-message-label { margin-bottom:6px; color:var(--za-text-3); font-size:11px; font-weight:400; }
+    #zotero-ask-panel .za-assistant .za-message-content { line-height:1.6; }
     #zotero-ask-panel .za-message-content h3, #zotero-ask-panel .za-message-content h4 { margin:10px 0 0; font-size:13px; font-weight:650; line-height:1.3; }
     #zotero-ask-panel .za-message-content h3 { font-size:14px; }
     #zotero-ask-panel .za-message-content :is(h3,h4) + br { display:none; }
@@ -308,24 +327,45 @@ function ZoteroAsk_ensureStyle(doc, { content = false } = {}) {
     #zotero-ask-panel .za-message-content .katex-display + br { display:none; }
     #zotero-ask-panel .za-message-content .za-math-source { font-family:var(--za-mono); font-size:.92em; color:var(--za-text-2); }
 
-    #zotero-ask-panel .za-composer { padding:8px 12px 10px; border-top:1px solid var(--za-line); background:var(--za-bg); }
-    #zotero-ask-panel .za-input-row { display:flex; align-items:flex-end; gap:8px; }
-    #zotero-ask-panel .za-input-row textarea { flex:1; min-width:0; min-height:44px; }
+    #zotero-ask-panel .za-composer { flex-shrink:0; padding:8px 12px 12px; background:var(--za-bg); }
+    #zotero-ask-panel .za-input-row { display:block; }
+    #zotero-ask-panel .za-input-row textarea { min-width:0; min-height:42px; max-height:180px; padding:11px 14px 4px; border:0; border-radius:0; background:transparent; resize:none; font-size:14px; line-height:1.5; }
     #zotero-ask-panel .za-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
     #zotero-ask-panel .za-settings-note { margin:0; color:var(--za-text-3); font-size:11px; line-height:1.45; }
-    #zotero-ask-panel .za-selection { margin-bottom:6px; padding:3px 4px 5px 9px; border-left:3px solid var(--za-quote); border-radius:0 var(--za-radius) var(--za-radius) 0; background:var(--za-quote-tint); }
+    #zotero-ask-panel .za-selection { margin:8px 8px 0; padding:6px 9px; border-left:2px solid var(--za-accent); border-radius:8px; background:var(--za-hover); }
     #zotero-ask-panel .za-selection-head { display:flex; align-items:center; justify-content:space-between; gap:6px; color:var(--za-text-2); font-size:11px; font-weight:600; }
     #zotero-ask-panel .za-selection-clear { width:20px; height:20px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--za-text-2); font-size:15px; line-height:1; text-align:center; }
     #zotero-ask-panel .za-selection-clear:hover { background:var(--za-hover); color:var(--za-text); }
-    #zotero-ask-panel .za-selection-text { max-height:4.6em; overflow:auto; color:var(--za-text); font:italic 12px/1.4 var(--za-serif); }
+    #zotero-ask-panel .za-selection-text { max-height:4.6em; overflow:auto; color:var(--za-text-2); font-size:12px; line-height:1.45; }
     #zotero-ask-panel textarea { display:block; width:100%; min-height:60px; max-height:180px; padding:7px 9px; resize:vertical; border:1px solid var(--za-line-strong); border-radius:var(--za-radius); background:var(--za-surface); line-height:1.45; }
     #zotero-ask-panel textarea::placeholder { color:var(--za-text-3); opacity:1; }
     #zotero-ask-panel textarea:focus-visible { border-color:var(--za-accent); outline:2px solid transparent; box-shadow:0 0 0 2px color-mix(in srgb,var(--za-accent) 30%,transparent); }
-    #zotero-ask-panel .za-send { flex:0 0 auto; min-width:64px; height:var(--za-control-height); padding:0 14px; border:0; border-radius:var(--za-radius); background:var(--za-accent); color:var(--za-on-accent); font-weight:600; }
-    #zotero-ask-panel .za-send:not(:disabled):hover { background:var(--za-accent-hover); }
+    #zotero-ask-panel .za-send { display:flex; align-items:center; justify-content:center; flex:0 0 30px; width:30px; min-width:30px; height:30px; padding:0; border:0; border-radius:50%; background:var(--za-text); color:var(--za-surface); }
+    #zotero-ask-panel .za-send:not(:disabled):hover { opacity:.8; background:var(--za-text); }
     #zotero-ask-panel .za-send:focus-visible { outline-offset:2px; }
     #zotero-ask-panel .za-send:disabled { background:var(--za-hover); color:var(--za-text-3); cursor:default; }
     #zotero-ask-panel .za-error { color:var(--za-error); }
+
+    #zotero-ask-panel svg { display:block; width:16px; height:16px; flex-shrink:0; }
+    #zotero-ask-panel .za-pill { position:relative; display:flex; min-width:0; flex:0 1 auto; max-width:140px; }
+    #zotero-ask-panel .za-pill-effort { max-width:90px; }
+    #zotero-ask-panel .za-pill > svg { position:absolute; right:4px; top:5px; pointer-events:none; color:var(--za-text-3); }
+    #zotero-ask-panel .za-pill:hover, #zotero-ask-panel .za-fast:hover { background:var(--za-hover); border-radius:7px; }
+    #zotero-ask-panel .za-fast:has(input:checked) { color:var(--za-accent); background:var(--za-accent-tint); }
+    #zotero-ask-panel .za-fast:has(input:focus-visible) { outline:2px solid var(--za-accent); }
+    #zotero-ask-panel .za-composer-box { overflow:hidden; border:1px solid var(--za-line); border-radius:14px; box-shadow:0 1px 2px #0000000a,0 4px 14px #0000000a; }
+    #zotero-ask-panel .za-composer-box:focus-within { border-color:color-mix(in srgb,var(--za-accent) 40%,var(--za-line)); box-shadow:0 1px 2px #0000000d,0 6px 22px #00000014; }
+    #zotero-ask-panel .za-input-row textarea:focus-visible { outline:0; box-shadow:none; }
+    #zotero-ask-panel .za-composer-bar { display:flex; justify-content:space-between; align-items:center; gap:4px; padding:2px 6px 6px; }
+    #zotero-ask-panel .za-model-row { flex:1; min-width:0; gap:0; }
+    #zotero-ask-panel .za-user .za-message-label { display:none; }
+    #zotero-ask-panel .za-empty-badge { display:grid; place-items:center; width:44px; height:44px; border-radius:13px; color:var(--za-accent); background:var(--za-accent-tint); }
+    #zotero-ask-panel .za-empty-badge svg { width:24px; height:24px; }
+    #zotero-ask-panel .za-empty strong { color:var(--za-text); font-size:15px; font-weight:600; }
+    #zotero-ask-panel .za-empty p { margin:0; max-width:240px; font-size:12px; line-height:1.6; }
+    #zotero-ask-panel .za-starters { display:flex; flex-direction:column; gap:6px; width:100%; max-width:260px; margin-top:8px; }
+    #zotero-ask-panel .za-starter { padding:9px 12px; border:1px solid var(--za-line); border-radius:10px; color:var(--za-text-2); background:transparent; font-size:12px; text-align:left; }
+    #zotero-ask-panel .za-starter:hover { color:var(--za-text); background:var(--za-hover); }
 
     @media (forced-colors:active) {
       #zotero-ask-panel .za-tab[aria-selected="true"], #zotero-ask-panel .za-message.za-user { border-color:Highlight; }
@@ -366,9 +406,9 @@ function ZoteroAsk_createPanel(reader, doc) {
   root.className = 'za-root';
   root.innerHTML = `
     <header>
-      <div class="za-title-row"><div class="za-title">Ask</div><button class="za-icon za-settings-toggle" title="Account and settings" aria-label="Account and settings" aria-expanded="false" aria-controls="za-settings">⚙︎</button><button class="za-icon za-new" title="New chat" aria-label="New chat">＋</button><button class="za-icon za-close" title="Close Ask" aria-label="Close Ask">×</button></div>
+      <div class="za-title-row"><div class="za-title">Ask</div><button class="za-icon za-settings-toggle" title="Account and settings" aria-label="Account and settings" aria-expanded="false" aria-controls="za-settings">${ZoteroAsk_icon('settings')}</button><button class="za-icon za-new" title="New chat" aria-label="New chat">${ZoteroAsk_icon('new')}</button><button class="za-icon za-close" title="Close Ask" aria-label="Close Ask">${ZoteroAsk_icon('close')}</button></div>
       <div class="za-paper">Open a PDF in Zotero to ask about it.</div>
-      <div class="za-model-row"><select class="za-model" aria-label="Model"><option>Loading models…</option></select><select class="za-effort" aria-label="Reasoning intensity"></select><label class="za-fast"><input class="za-fast-toggle" type="checkbox"> Fast</label></div>
+
     </header>
     <section class="za-settings" id="za-settings" aria-label="Account and settings" hidden>
       <div class="za-settings-group" role="group" aria-labelledby="za-account-heading">
@@ -390,7 +430,7 @@ function ZoteroAsk_createPanel(reader, doc) {
     <div class="za-status" role="status" aria-live="polite"></div>
     <div class="za-account-prompt" aria-live="polite" hidden><span class="za-account-prompt-text"></span><button type="button" class="za-button za-prompt-sign-in">Sign in</button></div>
     <main class="za-messages" role="log" aria-live="polite"></main>
-    <form class="za-composer"><div class="za-selection" hidden><div class="za-selection-head"><span class="za-selection-label"></span><button type="button" class="za-selection-clear" aria-label="Remove selected passage" title="Remove selected passage">×</button></div><div class="za-selection-text"></div></div><div class="za-input-row"><textarea aria-label="Ask a question" aria-describedby="za-key-hint" title="Enter to send · Shift+Enter for a new line" placeholder="Ask about this paper…"></textarea><button class="za-send" type="submit">Ask</button></div><span class="za-sr-only" id="za-key-hint">Enter sends the question. Shift+Enter adds a new line. Select text in the PDF to attach it.</span></form>
+    <form class="za-composer"><div class="za-composer-box"><div class="za-selection" hidden><div class="za-selection-head"><span class="za-selection-label"></span><button type="button" class="za-selection-clear" aria-label="Remove selected passage" title="Remove selected passage">${ZoteroAsk_icon('close')}</button></div><div class="za-selection-text"></div></div><div class="za-input-row"><textarea rows="1" aria-label="Ask a question" aria-describedby="za-key-hint" title="Enter to send · Shift+Enter for a new line" placeholder="Ask about this paper…"></textarea></div><div class="za-composer-bar"><div class="za-model-row"><span class="za-pill"><select class="za-model" aria-label="Model"><option>Loading models…</option></select>${ZoteroAsk_icon('chevron')}</span><span class="za-pill za-pill-effort"><select class="za-effort" aria-label="Reasoning intensity"></select>${ZoteroAsk_icon('chevron')}</span><label class="za-fast"><input class="za-fast-toggle" type="checkbox">${ZoteroAsk_icon('fast')} Fast</label></div><button class="za-send" type="submit" aria-label="Ask" title="Ask">${ZoteroAsk_icon('send')}</button></div></div><span class="za-sr-only" id="za-key-hint">Enter sends the question. Shift+Enter adds a new line. Select text in the PDF to attach it.</span></form>
   `;
   frameDoc.body.appendChild(root);
 
@@ -411,6 +451,7 @@ function ZoteroAsk_createPanel(reader, doc) {
   root.querySelector('.za-close').addEventListener('click', () => ZoteroAsk_setPanelOpen(state, false));
   root.querySelector('.za-new').addEventListener('click', () => ZoteroAsk_newChat(state));
   root.querySelector('.za-composer').addEventListener('submit', event => { event.preventDefault(); void ZoteroAsk_submit(state); });
+  state.input.addEventListener('input', () => ZoteroAsk_resizeInput(state));
   state.input.addEventListener('keydown', event => {
     const action = ZOTERO_ASK_CORE.composerKeyAction(event, {
       busy: ZoteroAsk_isRunning(state), disabled: state.input.disabled || state.sendButton.disabled, text: state.input.value
@@ -623,7 +664,18 @@ function ZoteroAsk_renderChats(state) {
   if (!chat || !chat.messages.length) {
     const empty = state.doc.createElement('div');
     empty.className = 'za-empty';
-    empty.textContent = state.item ? 'Ask anything about this paper.' : 'Open a PDF in Zotero to start a document chat.';
+    empty.innerHTML = `<div class="za-empty-badge">${ZoteroAsk_icon('sparkle')}</div><strong>Explore this paper</strong><p>${state.item ? 'Ask a question, or select a passage to look closer.' : 'Open a PDF in Zotero to start a document chat.'}</p>`;
+    if (state.item) {
+      const starters = state.doc.createElement('div');
+      starters.className = 'za-starters';
+      for (const question of ['Summarize the main findings', 'Explain the key methods', 'What are the limitations?']) {
+        const button = state.doc.createElement('button');
+        button.type = 'button'; button.className = 'za-starter'; button.textContent = question;
+        button.addEventListener('click', () => { state.input.value = question; ZoteroAsk_resizeInput(state); state.input.focus(); });
+        starters.appendChild(button);
+      }
+      empty.appendChild(starters);
+    }
     state.log.appendChild(empty);
     return;
   }
@@ -1161,6 +1213,7 @@ async function ZoteroAsk_submit(state) {
   const assistantMessage = { role: 'assistant', text: '', model: '' };
   chat.messages.push(assistantMessage);
   state.input.value = '';
+  ZoteroAsk_resizeInput(state);
   const run = { status: 'Preparing the full paper…', cancelled: false, started: 0, phase: '', note: '', timer: null };
   state.running.set(chatID, run);
   ZoteroAsk_renderAccount(state);
@@ -1286,7 +1339,9 @@ function ZoteroAsk_setRunStatus(state, chatID, text) {
 // Match the Ask/Stop button and status line to the chat on screen.
 function ZoteroAsk_syncRun(state) {
   const run = state.running.get(state.activeChatID);
-  state.sendButton.textContent = run ? 'Stop' : 'Ask';
+  state.sendButton.innerHTML = ZoteroAsk_icon(run ? 'stop' : 'send');
+  state.sendButton.setAttribute('aria-label', run ? 'Stop' : 'Ask');
+  state.sendButton.title = run ? 'Stop' : 'Ask';
   if (run) {
     state.status.classList.remove('za-error');
     state.status.textContent = run.status;
