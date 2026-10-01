@@ -4,9 +4,11 @@ Ask questions about a paper without leaving Zotero’s PDF reader. Zotero Ask ad
 
 ![Illustrative Zotero PDF reader preview with the Ask sidebar, chat tabs, a selected-passage chip, and a typeset equation](screenshots/zotero-ask-sidebar.png)
 
-*Illustrative preview recreated for 0.2.3 with synthetic paper text and model output; it is not a screenshot from a running Zotero window.*
+*Illustrative 0.2.5 preview rendered from the plugin’s actual UI styles and markup, with synthetic paper text and model output.*
 
 ## What it does
+
+A Reader-style interface with sage accents, quiet chat tabs, and model controls in the composer.
 
 - Opens as a sidebar beside the PDF in Zotero's reader; the document narrows to make room, so nothing is hidden under the panel.
 - Uses the paper text and question-relevant page images, which helps with figures and tables.
@@ -34,7 +36,7 @@ Zotero Ask talks to the Codex app-server started by the CLI on your computer. It
 
 ### 2. Install the Zotero plugin
 
-1. Download `zotero-ask-0.2.4.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
+1. Download `zotero-ask-0.2.5.xpi` from the [latest release](https://github.com/benshen94/zotero-ask/releases/latest).
 2. In Zotero, choose **Tools → Plugins**.
 3. Open the gear menu and choose **Install Plugin From File…**.
 4. Select the downloaded XPI and restart Zotero if prompted.
@@ -78,6 +80,8 @@ npm test
 The XPI is written to `dist/`. Install it through **Tools → Plugins → Install Plugin From File…**.
 
 `npm ci` installs the pinned KaTeX release. `build.sh` copies KaTeX into the XPI and embeds its fonts in the bundled stylesheet, so math rendering never loads anything from the network.
+
+The README preview is reproducible with `node scripts/preview.cjs screenshots/preview.html`. Serve the repository root locally and open `/screenshots/preview.html` to load the local KaTeX fonts. Delete the generated HTML after use. Add `?theme=dark&width=300` to inspect the narrow dark layout. All preview content is synthetic.
 
 ## Development status
 
