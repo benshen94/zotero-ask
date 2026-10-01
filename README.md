@@ -81,7 +81,7 @@ The XPI is written to `dist/`. Install it through **Tools → Plugins → Instal
 
 `npm ci` installs the pinned KaTeX release. `build.sh` copies KaTeX into the XPI and embeds its fonts in the bundled stylesheet, so math rendering never loads anything from the network.
 
-The README preview is reproducible with `node scripts/preview.cjs /tmp/zotero-ask-preview.html`. Serve it from the repository root to load the local KaTeX fonts. Add `?theme=dark&width=300` to inspect the narrow dark layout. All preview content is synthetic.
+The README preview is reproducible with `node scripts/preview.cjs screenshots/preview.html`. Serve the repository root locally and open `/screenshots/preview.html` to load the local KaTeX fonts. Delete the generated HTML after use. Add `?theme=dark&width=300` to inspect the narrow dark layout. All preview content is synthetic.
 
 ## Development status
 
